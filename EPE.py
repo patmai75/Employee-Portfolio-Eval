@@ -355,7 +355,7 @@ if st.session_state.ticker:
             while len(st.session_state.option_positions) < st.session_state.num_option_positions:
                 st.session_state.option_positions.append({
                     'shares': 50,
-                    'strike_price': last_price * 0.9,
+                    'strike_price': last_price,
                     'grant_date': datetime.now().date() - timedelta(days=365),
                     'is_vested': False,
                     'position_value': 0
