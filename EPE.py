@@ -398,276 +398,294 @@ if st.session_state.ticker:
                     st.markdown(f"<span style='color:{color};'>**Status:** {status}</span>", unsafe_allow_html=True)
                     st.write(f"**Position Value:** ${option_value:,.0f}")
 
-        # Calculate portfolio value
-        stock_value = st.session_state.shares * last_price
-        vested_option_value = sum(op['position_value'] for op in st.session_state.option_positions if op.get('is_vested', False))
-        total_option_value = sum(op['position_value'] for op in st.session_state.option_positions)
-
-        total_value = stock_value + vested_option_value
-        total_potential_value = stock_value + total_option_value
-
-        # Display portfolio values with enhanced visualization
-        st.markdown("### Portfolio Values")
-        # First row: 3 metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            col1.metric("Current Stock Value", f"${stock_value:,.0f}")
-        with col2:
-            col2.metric("Vested Option Value", f"${vested_option_value:,.0f}")
-        with col3:
-            col3.metric("Total Option Value", f"${total_option_value:,.0f}")
+        # **Add Conditional Check Here**
+        # Check if the user has entered at least one share or option position
+        has_shares = st.session_state.shares > 0
+        has_options = any(op['shares'] > 0 for op in st.session_state.option_positions)
         
-        # Second row: 2 metrics
-        col4, col5 = st.columns(2)
-        with col4:
-            col4.metric("Total Portfolio (Vested)", f"${total_value:,.0f}")
-        with col5:
-            col5.metric("Total Potential Portfolio", f"${total_potential_value:,.0f}")
+        if has_shares or has_options:
+            # Calculate portfolio value
+            stock_value = st.session_state.shares * last_price
+            vested_option_value = sum(op['position_value'] for op in st.session_state.option_positions if op.get('is_vested', False))
+            total_option_value = sum(op['position_value'] for op in st.session_state.option_positions)
 
-        st.markdown("---")
+            total_value = stock_value + vested_option_value
+            total_potential_value = stock_value + total_option_value
 
-        # Sensitivity Analysis of Potential Portfolio Value
+            # Display portfolio values with enhanced visualization
+            st.markdown("### Portfolio Values")
+            # First row: 3 metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                col1.metric("Current Stock Value", f"${stock_value:,.0f}")
+            with col2:
+                col2.metric("Vested Option Value", f"${vested_option_value:,.0f}")
+            with col3:
+                col3.metric("Total Option Value", f"${total_option_value:,.0f}")
+            
+            # Second row: 2 metrics
+            col4, col5 = st.columns(2)
+            with col4:
+                col4.metric("Total Portfolio (Vested)", f"${total_value:,.0f}")
+            with col5:
+                col5.metric("Total Potential Portfolio", f"${total_potential_value:,.0f}")
 
-        # Define the range of stock price adjustments (±10%, ±25%, ±50%, ±75%, ±100%)
-        adjustments = np.array([-1.0, -0.75, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])  # -100%, -75%, etc.
-        adjustment_labels = [
-            "-100%", "-75%", "-50%", "-25%", "-10%", "0%", 
-            "+10%", "+25%", "+50%", "+75%", "+100%", "+150%", "+200%"
-        ]
+            st.markdown("---")
 
-        # Calculate the new stock prices based on adjustments
-        adjusted_prices = last_price * (1 + adjustments)
+            # Sensitivity Analysis of Potential Portfolio Value
 
-        # Recalculate the Potential Portfolio value for each adjusted price
-        sensitivity_values = []
-        for price in adjusted_prices:
-            # Recalculate option values
-            potential_option_value = sum([calculate_option_value(price, op['strike_price'], op['shares']) for op in st.session_state.option_positions])
-            potential_portfolio = st.session_state.shares * price + potential_option_value
-            sensitivity_values.append(potential_portfolio)
+            # Define the range of stock price adjustments (±100%, etc.)
+            adjustments = np.array([-1.0, -0.75, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])  # -100%, -75%, etc.
+            adjustment_labels = [
+                "-100%", "-75%", "-50%", "-25%", "-10%", "0%", 
+                "+10%", "+25%", "+50%", "+75%", "+100%", "+150%", "+200%"
+            ]
 
-        # Create the sensitivity analysis figure
-        fig_sensitivity = go.Figure()
-        fig_sensitivity.add_trace(go.Scatter(
-            x=adjustment_labels,
-            y=sensitivity_values,
-            mode='lines+markers',
-            name='Potential Portfolio Value',
-            line=dict(color='blue')
-        ))
+            # Calculate the new stock prices based on adjustments
+            adjusted_prices = last_price * (1 + adjustments)
 
-        # Update layout and fix the X-axis labels
-        fig_sensitivity.update_layout(
-            title='Sensitivity Analysis of Potential Portfolio Value',
-            xaxis_title='Stock Price Adjustment',
-            yaxis_title='Potential Portfolio Value ($)',
-            xaxis=dict(
-                tickmode='array',
-                tickvals=adjustment_labels,  # Only show these specific points on the X-axis
-                ticktext=adjustment_labels,  # The labels for the X-axis
-            ),
-            yaxis=dict(tickformat=","),
-            height=600
-        )
+            # Recalculate the Potential Portfolio value for each adjusted price
+            sensitivity_values = []
+            for price in adjusted_prices:
+                # Recalculate option values
+                potential_option_value = sum([calculate_option_value(price, op['strike_price'], op['shares']) for op in st.session_state.option_positions])
+                potential_portfolio = st.session_state.shares * price + potential_option_value
+                sensitivity_values.append(potential_portfolio)
 
-        st.plotly_chart(fig_sensitivity)
-        
-        # Portfolio projection
-        st.subheader("Portfolio Value Projection")
-        projection_years = st.slider("Projection years", min_value=1, max_value=10, value=5)
-
-        st.markdown("### Portfolio Projection")
-        lower_percentile = 5
-        upper_percentile = 95
-
-        # Checkbox to use historical return and volatility or specify new values
-        # Checkbox to use historical return and volatility or specify new values
-        use_historical = st.checkbox("Use historical return and volatility", value=True)
-
-        if use_historical:
-            mu = annual_return / 100  # Convert percentage to decimal
-            sigma = volatility / 100  # Asegurar que usamos la volatilidad anualizada
-        else:
-            mu = st.number_input("Expected annual return (%)", value=10.0)
-            sigma = st.number_input("Expected annual volatility (%)", value=15.0)
-            mu = mu / 100  # Convert to decimal
-            sigma = sigma / 100
-
-        # Opción para mostrar las trayectorias simuladas del precio de la acción
-        show_simulation_paths = st.checkbox("Show all simulated stock price paths", value=False)
-
-        # Simulation parameters
-        num_simulations = 10000
-
-        # Define the time step (dt)
-        dt = 1/252  # Daily time steps (assuming 252 trading days per year)
-
-        # Calculate the total number of time steps
-        steps_per_year = int(1 / dt)  # Should be 252
-        total_steps = steps_per_year * projection_years  # Total steps
-
-        # Extract portfolio details
-        shares = st.session_state.shares
-        option_shares = np.array([op['shares'] for op in st.session_state.option_positions])
-        strike_prices = np.array([op['strike_price'] for op in st.session_state.option_positions])
-
-        # Handle cases with no shares or no options
-        if shares == 0 and len(option_shares) == 0:
-            st.warning("Your portfolio has no shares or option positions to project.")
-        else:
-            # Perform Monte Carlo simulation
-            with st.spinner("Running Monte Carlo simulation..."):
-                np.random.seed(42)  # For reproducibility
-
-                # Generate random standard normal variables
-                Z = np.random.standard_normal((num_simulations, total_steps))
-
-                # Calculate the increments using GBM formula
-                increments = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z
-
-                # Initialize log_S array to include initial price
-                log_S = np.zeros((num_simulations, total_steps + 1))
-                log_S[:, 0] = np.log(last_price)
-
-                # Compute cumulative sum of increments
-                log_S[:, 1:] = log_S[:, 0, np.newaxis] + np.cumsum(increments, axis=1)
-
-                # Calculate stock price paths
-                stock_price_paths = np.exp(log_S)  # Shape: (num_simulations, total_steps + 1)
-
-                # Si el usuario seleccionó mostrar las trayectorias simuladas
-                if show_simulation_paths:
-                    # Crear la figura
-                    fig_simulation_paths = go.Figure()
-                    
-                    # Crear un array de tiempos en años
-                    time_array = np.linspace(0, projection_years, total_steps + 1)
-                    
-                    # Definir el número de trayectorias a mostrar para evitar sobrecargar la gráfica
-                    num_paths_to_plot = st.slider("Number of simulation paths to display", min_value=10, max_value=500, value=50, step=10)
-                    #num_paths_to_plot = min(100, num_simulations)  # Máximo 100 trayectorias
-                    
-                    # Agregar las trayectorias a la figura
-                    for i in range(num_paths_to_plot):
-                        fig_simulation_paths.add_trace(go.Scatter(
-                            x=time_array,
-                            y=stock_price_paths[i],
-                            mode='lines',
-                            line=dict(width=1),
-                            opacity=0.5,
-                            showlegend=False
-                        ))
-                    
-                    # Actualizar el diseño de la gráfica
-                    fig_simulation_paths.update_layout(
-                        title='Simulated Stock Price Paths',
-                        xaxis_title='Years',
-                        yaxis_title='Stock Price ($)',
-                        template='plotly_white',
-                        height=600
-                    )
-                    
-                    # Mostrar la gráfica en Streamlit
-                    st.plotly_chart(fig_simulation_paths, use_container_width=True)
-
-                # Continuar con el cálculo de stock_price_paths_yearly y demás código
-                # Define year indices (including time zero)
-                year_indices = np.arange(0, total_steps + 1, steps_per_year)  # Indices at which we sample for each year
-
-                # Get stock prices at the end of each year (including initial price)
-                stock_price_paths_yearly = stock_price_paths[:, year_indices]  # Shape: (num_simulations, projection_years + 1)
-
-                # Calculate stock value
-                stock_values = shares * stock_price_paths_yearly  # Shape: (num_simulations, projection_years + 1)
-
-                # Calculate option values
-                if len(option_shares) > 0:
-                    # Expand dimensions for broadcasting
-                    stock_price_expanded = stock_price_paths_yearly[:, :, np.newaxis]  # Shape: (num_simulations, projection_years + 1, 1)
-                    strike_prices_expanded = strike_prices[np.newaxis, np.newaxis, :]  # Shape: (1, 1, num_options)
-                    option_values = np.maximum(stock_price_expanded - strike_prices_expanded, 0) * option_shares  # Shape: (num_simulations, projection_years + 1, num_options)
-                    total_option_values = np.sum(option_values, axis=2)  # Shape: (num_simulations, projection_years + 1)
-                else:
-                    total_option_values = np.zeros((num_simulations, projection_years + 1))  # Shape: (num_simulations, projection_years + 1)
-
-                # Calculate total portfolio value
-                total_portfolio_values = stock_values + total_option_values  # Shape: (num_simulations, projection_years + 1)
-
-                # Calculate median and confidence intervals
-                median_portfolio = np.median(total_portfolio_values, axis=0)
-                lower_portfolio = np.percentile(total_portfolio_values, lower_percentile, axis=0)
-                upper_portfolio = np.percentile(total_portfolio_values, upper_percentile, axis=0)
-
-
-                # Identify the simulation indices for median, lower, and upper portfolio values at the final year
-                median_final = median_portfolio[-1]
-                lower_final = lower_portfolio[-1]
-                upper_final = upper_portfolio[-1]
-
-                # Find the indices of simulations closest to the median, lower, and upper portfolio values
-                median_index = np.abs(total_portfolio_values[:, -1] - median_final).argmin()
-                lower_index = np.abs(total_portfolio_values[:, -1] - lower_final).argmin()
-                upper_index = np.abs(total_portfolio_values[:, -1] - upper_final).argmin()
-
-                # Extract the corresponding stock values for these simulations
-                median_stock_value = stock_values[median_index, -1]
-                lower_stock_value = stock_values[lower_index, -1]
-                upper_stock_value = stock_values[upper_index, -1]
-
-            # Prepare data for plotting
-            years = np.arange(0, projection_years + 1)
-            fig_projection = go.Figure()
-
-            # Add median portfolio path
-            fig_projection.add_trace(go.Scatter(
-                x=years,
-                y=median_portfolio,
-                mode='lines',
-                name='Median Portfolio Value',
-                line=dict(color='blue', width=2)
+            # Create the sensitivity analysis figure
+            fig_sensitivity = go.Figure()
+            fig_sensitivity.add_trace(go.Scatter(
+                x=adjustment_labels,
+                y=sensitivity_values,
+                mode='lines+markers',
+                name='Potential Portfolio Value',
+                line=dict(color='blue')
             ))
 
-            # Add lower and upper confidence interval paths
-            fig_projection.add_trace(go.Scatter(
-                x=years,
-                y=lower_portfolio,
-                mode='lines',
-                name=f'{lower_percentile}th Percentile',
-                line=dict(color='red', width=1, dash='dash')
-            ))
-
-            fig_projection.add_trace(go.Scatter(
-                x=years,
-                y=upper_portfolio,
-                mode='lines',
-                name=f'{upper_percentile}th Percentile',
-                line=dict(color='green', width=1, dash='dash')
-            ))
-
-            # Update layout
-            fig_projection.update_layout(
-                title='Portfolio Value Projection',
-                xaxis_title='Years',
-                yaxis_title='Portfolio Value ($)',
-                legend=dict(x=0, y=1, bgcolor='rgba(255,255,255,0)'),
-                template='plotly_white',
+            # Update layout and fix the X-axis labels
+            fig_sensitivity.update_layout(
+                title='Sensitivity Analysis of Potential Portfolio Value',
+                xaxis_title='Stock Price Adjustment',
+                yaxis_title='Potential Portfolio Value ($)',
+                xaxis=dict(
+                    tickmode='array',
+                    tickvals=adjustment_labels,  # Only show these specific points on the X-axis
+                    ticktext=adjustment_labels,  # The labels for the X-axis
+                ),
+                yaxis=dict(tickformat=","),
                 height=600
             )
 
-            st.plotly_chart(fig_projection, use_container_width=True)
+            st.plotly_chart(fig_sensitivity)
+            
+            # Portfolio projection
+            st.subheader("Portfolio Value Projection")
+            projection_years = st.slider("Projection years", min_value=1, max_value=10, value=5)
 
-            # Display summary statistics with both portfolio and stock values
-            st.markdown("### Projection Summary")
-            col_sum1, col_sum2, col_sum3 = st.columns(3)
+            st.markdown("### Portfolio Projection")
+            lower_percentile = 5
+            upper_percentile = 95
 
-            with col_sum1:
-                st.metric("Median Portfolio Value", f"${median_final:,.0f}")
-                st.markdown(f"**Median Stock Value:** ${median_stock_value / st.session_state.shares:,.2f}")
+            # Checkbox to use historical return and volatility or specify new values
+            use_historical = st.checkbox("Use historical return and volatility", value=True)
 
-            with col_sum2:
-                st.metric(f"{lower_percentile}th Percentile Value", f"${lower_final:,.0f}")
-                st.markdown(f"**Lower Percentile Stock Value:** ${lower_stock_value / st.session_state.shares:,.2f}")
+            if use_historical:
+                mu = annual_return / 100  # Convert percentage to decimal
+                sigma = volatility / 100  # Ensure we use the annualized volatility
+            else:
+                mu = st.number_input("Expected annual return (%)", value=10.0)
+                sigma = st.number_input("Expected annual volatility (%)", value=15.0)
+                mu = mu / 100  # Convert to decimal
+                sigma = sigma / 100
 
-            with col_sum3:
-                st.metric(f"{upper_percentile}th Percentile Value", f"${upper_final:,.0f}")
-                st.markdown(f"**Upper Percentile Stock Value:** ${upper_stock_value / st.session_state.shares:,.2f}")
+            # Option to show simulated stock price paths
+            show_simulation_paths = st.checkbox("Show all simulated stock price paths", value=False)
+
+            # Simulation parameters
+            num_simulations = 10000
+
+            # Define the time step (dt)
+            dt = 1/252  # Daily time steps (assuming 252 trading days per year)
+
+            # Calculate the total number of time steps
+            steps_per_year = int(1 / dt)  # Should be 252
+            total_steps = steps_per_year * projection_years  # Total steps
+
+            # Extract portfolio details
+            shares = st.session_state.shares
+            option_shares = np.array([op['shares'] for op in st.session_state.option_positions])
+            strike_prices = np.array([op['strike_price'] for op in st.session_state.option_positions])
+
+            # Handle cases with no shares or no options
+            if shares == 0 and len(option_shares) == 0:
+                st.warning("Your portfolio has no shares or option positions to project.")
+            else:
+                # Perform Monte Carlo simulation
+                with st.spinner("Running Monte Carlo simulation..."):
+                    np.random.seed(42)  # For reproducibility
+
+                    # Generate random standard normal variables
+                    Z = np.random.standard_normal((num_simulations, total_steps))
+
+                    # Calculate the increments using GBM formula
+                    increments = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z
+
+                    # Initialize log_S array to include initial price
+                    log_S = np.zeros((num_simulations, total_steps + 1))
+                    log_S[:, 0] = np.log(last_price)
+
+                    # Compute cumulative sum of increments
+                    log_S[:, 1:] = log_S[:, 0, np.newaxis] + np.cumsum(increments, axis=1)
+
+                    # Calculate stock price paths
+                    stock_price_paths = np.exp(log_S)  # Shape: (num_simulations, total_steps + 1)
+
+                    # If the user selected to show the simulated paths
+                    if show_simulation_paths:
+                        # Create the figure
+                        fig_simulation_paths = go.Figure()
+                        
+                        # Create a time array in years
+                        time_array = np.linspace(0, projection_years, total_steps + 1)
+                        
+                        # Define the number of paths to plot to avoid overloading the graph
+                        num_paths_to_plot = st.slider("Number of simulation paths to display", min_value=10, max_value=500, value=50, step=10)
+                        
+                        # Add the paths to the figure
+                        for i in range(num_paths_to_plot):
+                            fig_simulation_paths.add_trace(go.Scatter(
+                                x=time_array,
+                                y=stock_price_paths[i],
+                                mode='lines',
+                                line=dict(width=1),
+                                opacity=0.5,
+                                showlegend=False
+                            ))
+                        
+                        # Update the layout of the plot
+                        fig_simulation_paths.update_layout(
+                            title='Simulated Stock Price Paths',
+                            xaxis_title='Years',
+                            yaxis_title='Stock Price ($)',
+                            template='plotly_white',
+                            height=600
+                        )
+                        
+                        # Display the plot in Streamlit
+                        st.plotly_chart(fig_simulation_paths, use_container_width=True)
+
+                    # Continue with the calculation of stock_price_paths_yearly and other code
+                    # Define year indices (including time zero)
+                    year_indices = np.arange(0, total_steps + 1, steps_per_year)  # Indices at which we sample for each year
+
+                    # Get stock prices at the end of each year (including initial price)
+                    stock_price_paths_yearly = stock_price_paths[:, year_indices]  # Shape: (num_simulations, projection_years + 1)
+
+                    # Calculate stock value
+                    stock_values = shares * stock_price_paths_yearly  # Shape: (num_simulations, projection_years + 1)
+
+                    # Calculate option values
+                    if len(option_shares) > 0:
+                        # Expand dimensions for broadcasting
+                        stock_price_expanded = stock_price_paths_yearly[:, :, np.newaxis]  # Shape: (num_simulations, projection_years + 1, 1)
+                        strike_prices_expanded = strike_prices[np.newaxis, np.newaxis, :]  # Shape: (1, 1, num_options)
+                        option_values = np.maximum(stock_price_expanded - strike_prices_expanded, 0) * option_shares  # Shape: (num_simulations, projection_years + 1, num_options)
+                        total_option_values = np.sum(option_values, axis=2)  # Shape: (num_simulations, projection_years + 1)
+                    else:
+                        total_option_values = np.zeros((num_simulations, projection_years + 1))  # Shape: (num_simulations, projection_years + 1)
+
+                    # Calculate total portfolio value
+                    total_portfolio_values = stock_values + total_option_values  # Shape: (num_simulations, projection_years + 1)
+
+                    # Calculate median and confidence intervals
+                    median_portfolio = np.median(total_portfolio_values, axis=0)
+                    lower_portfolio = np.percentile(total_portfolio_values, lower_percentile, axis=0)
+                    upper_portfolio = np.percentile(total_portfolio_values, upper_percentile, axis=0)
+
+
+                    # Identify the simulation indices for median, lower, and upper portfolio values at the final year
+                    median_final = median_portfolio[-1]
+                    lower_final = lower_portfolio[-1]
+                    upper_final = upper_portfolio[-1]
+
+                    # Find the indices of simulations closest to the median, lower, and upper portfolio values
+                    median_index = np.abs(total_portfolio_values[:, -1] - median_final).argmin()
+                    lower_index = np.abs(total_portfolio_values[:, -1] - lower_final).argmin()
+                    upper_index = np.abs(total_portfolio_values[:, -1] - upper_final).argmin()
+
+                    # Extract the corresponding stock values for these simulations
+                    median_stock_value = stock_values[median_index, -1]
+                    lower_stock_value = stock_values[lower_index, -1]
+                    upper_stock_value = stock_values[upper_index, -1]
+
+                # Prepare data for plotting
+                years = np.arange(0, projection_years + 1)
+                fig_projection = go.Figure()
+
+                # Add median portfolio path
+                fig_projection.add_trace(go.Scatter(
+                    x=years,
+                    y=median_portfolio,
+                    mode='lines',
+                    name='Median Portfolio Value',
+                    line=dict(color='blue', width=2)
+                ))
+
+                # Add lower and upper confidence interval paths
+                fig_projection.add_trace(go.Scatter(
+                    x=years,
+                    y=lower_portfolio,
+                    mode='lines',
+                    name=f'{lower_percentile}th Percentile',
+                    line=dict(color='red', width=1, dash='dash')
+                ))
+
+                fig_projection.add_trace(go.Scatter(
+                    x=years,
+                    y=upper_portfolio,
+                    mode='lines',
+                    name=f'{upper_percentile}th Percentile',
+                    line=dict(color='green', width=1, dash='dash')
+                ))
+
+                # Update layout
+                fig_projection.update_layout(
+                    title='Portfolio Value Projection',
+                    xaxis_title='Years',
+                    yaxis_title='Portfolio Value ($)',
+                    legend=dict(x=0, y=1, bgcolor='rgba(255,255,255,0)'),
+                    template='plotly_white',
+                    height=600
+                )
+
+                st.plotly_chart(fig_projection, use_container_width=True)
+
+                # Display summary statistics with both portfolio and stock values
+                st.markdown("### Projection Summary")
+                col_sum1, col_sum2, col_sum3 = st.columns(3)
+
+                with col_sum1:
+                    st.metric("Median Portfolio Value", f"${median_final:,.0f}")
+                    if shares > 0:
+                        median_stock_per_share = median_stock_value / shares if shares != 0 else 0
+                        st.markdown(f"**Median Stock Value:** ${median_stock_per_share:,.2f}")
+                    else:
+                        st.markdown("**Median Stock Value:** N/A")
+
+                with col_sum2:
+                    st.metric(f"{lower_percentile}th Percentile Value", f"${lower_final:,.0f}")
+                    if shares > 0:
+                        lower_stock_per_share = lower_stock_value / shares if shares != 0 else 0
+                        st.markdown(f"**Lower Percentile Stock Value:** ${lower_stock_per_share:,.2f}")
+                    else:
+                        st.markdown("**Lower Percentile Stock Value:** N/A")
+
+                with col_sum3:
+                    st.metric(f"{upper_percentile}th Percentile Value", f"${upper_final:,.0f}")
+                    if shares > 0:
+                        upper_stock_per_share = upper_stock_value / shares if shares != 0 else 0
+                        st.markdown(f"**Upper Percentile Stock Value:** ${upper_stock_per_share:,.2f}")
+                    else:
+                        st.markdown("**Upper Percentile Stock Value:** N/A")
+        else:
+            st.warning("Please enter at least one share or option position to proceed.")
