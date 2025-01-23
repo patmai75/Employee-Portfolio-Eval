@@ -492,8 +492,8 @@ if st.session_state.ticker:
             if use_historical:
                 mu = annual_return / 100  # Convert percentage to decimal
                 sigma = volatility / 100  # Ensure we use the annualized volatility
-                st.text(f"Historical Return: ${annual_return:,.2f}%")
-                st.text(f"Historical Volatility: ${volatility:,.2f}%")
+                st.text(f"${time_window}-y Annual Historical Return: ${annual_return:,.2f}%")
+                st.text(f"${time_window}-y Annual Historical Volatility: ${volatility:,.2f}%")
             else:
                 mu = st.number_input("Expected annual return (%)", value=10.0)
                 sigma = st.number_input("Expected annual volatility (%)", value=15.0)
