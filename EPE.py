@@ -145,7 +145,7 @@ with st.sidebar:
         ### 8. Portfolio Projection
         - **Projection Years:** Select the time horizon for the projection (1-10 years).
         - **Simulation Parameters:**
-            - Use historical return and volatility or input your own estimates.
+            - torical return and volatility or input your own estimates.
             - **Show Simulated Paths:** Optionally, visualize the simulated price paths.
         - The Monte Carlo simulation estimates your portfolio's future value.
         - Review projected metrics and the projection chart.
@@ -492,6 +492,8 @@ if st.session_state.ticker:
             if use_historical:
                 mu = annual_return / 100  # Convert percentage to decimal
                 sigma = volatility / 100  # Ensure we use the annualized volatility
+                st.text(f"Historical Return: ${annual_return:,.0f}%")
+                st.text(f"Historical Volatility: ${volatility:,.0f}%")
             else:
                 mu = st.number_input("Expected annual return (%)", value=10.0)
                 sigma = st.number_input("Expected annual volatility (%)", value=15.0)
