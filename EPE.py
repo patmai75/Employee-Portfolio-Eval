@@ -110,7 +110,7 @@ with st.sidebar:
         - **Clear Data:** Reset all fields and entered data.
 
         ### 2. Enter Company Data
-        - **Ticker Symbol:** Enter the company's stock ticker (e.g., `AAPL` for Apple Inc.).
+        - **Ticker Symbol:** Enter the company's stock ticker (e.g., `PG` for Procter & Gamble.).
         - **Time Window:** Select the period to analyze the stock's historical data.
 
         ### 3. Stock Summary
