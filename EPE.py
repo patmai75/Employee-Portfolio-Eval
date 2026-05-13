@@ -14,7 +14,7 @@ import yfinance as yf
 
 APP_TITLE = "Employee Portfolio Evaluation"
 TRADING_DAYS = 252
-DEFAULT_TICKER = "AAPL"
+DEFAULT_TICKER = "PG"
 DEFAULT_BENCHMARK = "SPY"
 TIME_WINDOWS: dict[str, str] = {
     "1m": "1mo",
@@ -60,23 +60,43 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .main .block-container {padding-top: 2rem; padding-bottom: 3rem;}
+        html, body, [class*="css"] {font-size: 18px;}
+        .main .block-container {padding-top: 1.25rem; padding-bottom: 3rem; max-width: 1440px;}
+        h1, h2, h3 {letter-spacing: -0.035em;}
+        h2 {font-size: clamp(1.55rem, 2vw, 2.25rem) !important;}
+        h3 {font-size: clamp(1.25rem, 1.5vw, 1.65rem) !important;}
         div[data-testid="stMetric"] {
-            background: linear-gradient(135deg, rgba(18, 25, 38, 0.06), rgba(65, 105, 225, 0.04));
-            border: 1px solid rgba(120, 144, 180, 0.18);
-            border-radius: 18px;
-            padding: 1rem;
+            background: linear-gradient(135deg, rgba(18, 25, 38, 0.075), rgba(65, 105, 225, 0.045));
+            border: 1px solid rgba(120, 144, 180, 0.22);
+            border-radius: 22px;
+            padding: 1.05rem 1.1rem;
+            box-shadow: 0 14px 35px rgba(15, 23, 42, 0.06);
         }
+        div[data-testid="stMetricLabel"] p {font-size: 1.02rem; font-weight: 750;}
+        div[data-testid="stMetricValue"] {font-size: clamp(1.45rem, 2.3vw, 2.25rem); font-weight: 850;}
         .portfolio-hero {
-            padding: 1.3rem 1.5rem;
-            border-radius: 24px;
-            background: linear-gradient(135deg, #101828 0%, #1d4ed8 55%, #14b8a6 100%);
+            padding: clamp(1.15rem, 3vw, 2.4rem);
+            border-radius: 30px;
+            background: radial-gradient(circle at 20% 20%, rgba(20,184,166,.55), transparent 24%), linear-gradient(135deg, #0f172a 0%, #1d4ed8 52%, #14b8a6 100%);
             color: white;
             margin-bottom: 1rem;
+            box-shadow: 0 24px 55px rgba(29, 78, 216, 0.23);
         }
-        .portfolio-hero h1 {margin: 0; font-size: 2.3rem;}
-        .portfolio-hero p {margin: .35rem 0 0 0; opacity: .9;}
-        .small-note {font-size: .85rem; opacity: .72;}
+        .portfolio-hero h1 {margin: 0; font-size: clamp(2.15rem, 5vw, 4.6rem); line-height: .95;}
+        .portfolio-hero p {margin: .75rem 0 0 0; opacity: .93; font-size: clamp(1.02rem, 2vw, 1.35rem); max-width: 980px;}
+        .section-card {
+            border: 1px solid rgba(148, 163, 184, .25);
+            border-radius: 24px;
+            padding: 1.1rem 1.25rem;
+            background: rgba(248, 250, 252, .62);
+        }
+        .small-note {font-size: .95rem; opacity: .75;}
+        @media (max-width: 760px) {
+            html, body, [class*="css"] {font-size: 16px;}
+            .main .block-container {padding-left: .85rem; padding-right: .85rem;}
+            div[data-testid="column"] {width: 100% !important; flex: 1 1 100% !important;}
+            div[data-testid="stMetric"] {padding: .9rem; border-radius: 18px;}
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -90,16 +110,21 @@ def fetch_history(tickers: tuple[str, ...], period: str) -> pd.DataFrame:
     if not tickers:
         return pd.DataFrame()
 
-    data = yf.download(
-        tickers=list(tickers),
-        period=period,
-        interval="1d",
-        auto_adjust=True,
-        actions=True,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
+    download_kwargs: dict[str, Any] = {
+        "tickers": list(tickers),
+        "interval": "1d",
+        "auto_adjust": True,
+        "actions": True,
+        "progress": False,
+        "group_by": "ticker",
+        "threads": True,
+    }
+    if period == "max":
+        download_kwargs["start"] = "1900-01-01"
+    else:
+        download_kwargs["period"] = period
+
+    data = yf.download(**download_kwargs)
 
     if data.empty:
         return pd.DataFrame()
@@ -457,6 +482,284 @@ def make_projection_chart(results: dict[str, Any], years: int) -> go.Figure:
     return fig
 
 
+
+
+def history_window(data: pd.DataFrame, years: int | None) -> pd.DataFrame:
+    if data.empty or years is None:
+        return data.copy()
+    cutoff = data.index.max() - pd.DateOffset(years=years)
+    return data[data.index >= cutoff].copy()
+
+
+def portfolio_summary(shares: int, options: pd.DataFrame, price: float) -> dict[str, float]:
+    option_shares = int(options["shares"].sum()) if not options.empty else 0
+    vested_shares = int(options.loc[options["is_vested"], "shares"].sum()) if not options.empty else 0
+    unvested_shares = option_shares - vested_shares
+    itm_options = options[options["strike_price"] < price] if not options.empty else options
+    itm_shares = int(itm_options["shares"].sum()) if not itm_options.empty else 0
+    weighted_strike = float(np.average(options["strike_price"], weights=options["shares"])) if option_shares else 0.0
+    weighted_vested_strike = (
+        float(np.average(options.loc[options["is_vested"], "strike_price"], weights=options.loc[options["is_vested"], "shares"]))
+        if vested_shares
+        else 0.0
+    )
+    total_intrinsic = float(options["intrinsic_value"].sum()) if "intrinsic_value" in options else 0.0
+    return {
+        "common_shares": float(shares),
+        "option_shares": float(option_shares),
+        "vested_option_shares": float(vested_shares),
+        "unvested_option_shares": float(unvested_shares),
+        "in_the_money_option_shares": float(itm_shares),
+        "equivalent_share_exposure": float(shares + option_shares),
+        "weighted_avg_strike": weighted_strike,
+        "weighted_avg_vested_strike": weighted_vested_strike,
+        "avg_intrinsic_per_option": total_intrinsic / option_shares if option_shares else 0.0,
+        "option_intrinsic_value": total_intrinsic,
+        "options_itm_pct": itm_shares / option_shares if option_shares else 0.0,
+    }
+
+
+def make_waterfall_chart(values: dict[str, float], currency: str) -> go.Figure:
+    fig = go.Figure(
+        go.Waterfall(
+            name="Portfolio build-up",
+            orientation="v",
+            measure=["relative", "relative", "total"],
+            x=["Shares", "Options", "Potential total"],
+            y=[values["stock_value"], values["total_option_value"], values["potential_portfolio"]],
+            connector={"line": {"color": "rgba(100,116,139,.45)"}},
+            increasing={"marker": {"color": "#2563eb"}},
+            totals={"marker": {"color": "#14b8a6"}},
+        )
+    )
+    fig.update_layout(
+        title="How your potential portfolio value is built",
+        yaxis={"tickprefix": f"{currency} ", "separatethousands": True},
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_vesting_schedule_chart(options: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if options.empty or not (options["shares"] > 0).any():
+        fig.update_layout(title="Vesting schedule", annotations=[{"text": "Add option grants to see vesting", "showarrow": False}])
+        return fig
+
+    schedule = options[options["shares"] > 0].copy()
+    schedule["status"] = np.where(schedule["is_vested"], "Vested", "Unvested")
+    schedule["label"] = schedule["vested_on"].astype(str)
+    colors = {"Vested": "#14b8a6", "Unvested": "#f59e0b"}
+    for status, frame in schedule.groupby("status"):
+        fig.add_trace(
+            go.Bar(
+                x=frame["vested_on"],
+                y=frame["shares"],
+                name=status,
+                marker_color=colors[status],
+                customdata=np.stack([frame["strike_price"], frame["intrinsic_value"]], axis=1),
+                hovertemplate="Vests %{x}<br>Shares %{y:,.0f}<br>Strike $%{customdata[0]:,.2f}<br>Intrinsic $%{customdata[1]:,.0f}<extra></extra>",
+            )
+        )
+    fig.update_layout(
+        title="Option vesting schedule by vest date",
+        xaxis_title="Vesting date",
+        yaxis_title="Option shares",
+        barmode="stack",
+        hovermode="x unified",
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_cumulative_vesting_chart(options: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if options.empty or not (options["shares"] > 0).any():
+        fig.update_layout(title="Cumulative vested option shares")
+        return fig
+
+    schedule = options[options["shares"] > 0].sort_values("vested_on").copy()
+    schedule["cumulative_shares"] = schedule["shares"].cumsum()
+    fig.add_trace(
+        go.Scatter(
+            x=schedule["vested_on"],
+            y=schedule["cumulative_shares"],
+            mode="lines+markers",
+            fill="tozeroy",
+            line={"color": "#1d4ed8", "width": 3},
+            name="Cumulative vested shares",
+        )
+    )
+    fig.update_layout(
+        title="Cumulative vesting curve",
+        xaxis_title="Vesting date",
+        yaxis_title="Cumulative option shares",
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_drawdown_chart(data: pd.DataFrame) -> go.Figure:
+    close = data["Close"].dropna()
+    drawdown = close / close.cummax() - 1
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=drawdown.index, y=drawdown, fill="tozeroy", line={"color": "#ef4444"}, name="Drawdown"))
+    fig.update_layout(
+        title="Drawdown from previous highs",
+        xaxis_title="Date",
+        yaxis={"tickformat": ".0%"},
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_return_distribution_chart(data: pd.DataFrame) -> go.Figure:
+    returns = data["Close"].pct_change().dropna()
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=returns, nbinsx=70, marker_color="#2563eb", opacity=.84, name="Daily returns"))
+    fig.update_layout(
+        title="Distribution of daily returns",
+        xaxis={"title": "Daily return", "tickformat": ".1%"},
+        yaxis_title="Trading days",
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_rolling_volatility_chart(data: pd.DataFrame) -> go.Figure:
+    returns = np.log(data["Close"] / data["Close"].shift(1)).dropna()
+    rolling_vol = returns.rolling(63).std() * np.sqrt(TRADING_DAYS)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=rolling_vol.index, y=rolling_vol, mode="lines", line={"color": "#7c3aed"}, name="63D annualized vol"))
+    fig.update_layout(
+        title="Rolling 3-month annualized volatility",
+        xaxis_title="Date",
+        yaxis={"tickformat": ".0%"},
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def scenario_metrics_from_history(full_data: pd.DataFrame, selected_data: pd.DataFrame, custom_mu: float, custom_sigma: float) -> pd.DataFrame:
+    scenarios: list[dict[str, Any]] = []
+    windows = {
+        "Full history": full_data,
+        "10Y history": history_window(full_data, 10),
+        "5Y history": history_window(full_data, 5),
+        "3Y history": history_window(full_data, 3),
+        "Custom / selected": selected_data,
+    }
+    for name, frame in windows.items():
+        if frame.empty or len(frame.dropna(subset=["Close"])) < 2:
+            continue
+        if name == "Custom / selected":
+            mu, sigma = custom_mu, custom_sigma
+            window_start = frame.index.min().date()
+        else:
+            metrics = calculate_metrics(frame)
+            mu, sigma = metrics.annual_return, max(metrics.annual_volatility, 0.0001)
+            window_start = frame.index.min().date()
+        scenarios.append(
+            {
+                "scenario": name,
+                "annual_return": float(mu),
+                "annual_volatility": float(max(sigma, 0.0001)),
+                "start_date": str(window_start),
+                "observations": int(frame["Close"].dropna().shape[0]),
+            }
+        )
+    return pd.DataFrame(scenarios)
+
+
+def make_scenario_scatter(scenarios: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if scenarios.empty:
+        return fig
+    fig.add_trace(
+        go.Scatter(
+            x=scenarios["annual_volatility"],
+            y=scenarios["annual_return"],
+            mode="markers+text",
+            text=scenarios["scenario"],
+            textposition="top center",
+            marker={"size": np.clip(scenarios["observations"] / 55, 14, 44), "color": "#2563eb", "opacity": .78},
+            hovertemplate="%{text}<br>Return %{y:.2%}<br>Volatility %{x:.2%}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title="Scenario return/volatility map",
+        xaxis={"title": "Annual volatility", "tickformat": ".0%"},
+        yaxis={"title": "Annual return", "tickformat": ".0%"},
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
+    return fig
+
+
+def make_multi_projection_chart(results_by_scenario: dict[str, dict[str, Any]], years: int) -> go.Figure:
+    fig = go.Figure()
+    palette = ["#1d4ed8", "#14b8a6", "#f97316", "#7c3aed", "#ef4444"]
+    x = np.arange(0, years + 1)
+    for index, (scenario, results) in enumerate(results_by_scenario.items()):
+        color = palette[index % len(palette)]
+        p = results["percentiles"]
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=p[50],
+                mode="lines+markers",
+                name=f"{scenario} median",
+                line={"color": color, "width": 3},
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=p[95],
+                mode="lines",
+                line={"color": color, "width": 1, "dash": "dot"},
+                opacity=.42,
+                name=f"{scenario} p95",
+                showlegend=index < 2,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=p[5],
+                mode="lines",
+                line={"color": color, "width": 1, "dash": "dot"},
+                opacity=.42,
+                name=f"{scenario} p5",
+                showlegend=index < 2,
+            )
+        )
+    fig.update_layout(
+        title="Portfolio projections across historical regimes",
+        xaxis_title="Years from today",
+        yaxis={"title": "Projected portfolio value", "tickprefix": "$", "separatethousands": True},
+        hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        margin={"l": 20, "r": 20, "t": 85, "b": 20},
+    )
+    return fig
+
+
+def projection_summary_table(results_by_scenario: dict[str, dict[str, Any]], currency: str) -> pd.DataFrame:
+    rows = []
+    for scenario, results in results_by_scenario.items():
+        rows.append(
+            {
+                "Scenario": scenario,
+                "P5 final": results["percentiles"][5][-1],
+                "Median final": results["percentiles"][50][-1],
+                "P95 final": results["percentiles"][95][-1],
+                "Mean final": results["mean_final"],
+                "P(gain)": results["probability_gain"],
+                "P(double)": results["probability_double"],
+            }
+        )
+    return pd.DataFrame(rows)
+
 def make_simulation_paths_chart(results: dict[str, Any], paths_to_show: int) -> go.Figure:
     fig = go.Figure()
     time_axis = results["sample_time"]
@@ -533,7 +836,7 @@ def main() -> None:
         f"""
         <div class="portfolio-hero">
             <h1>💼 {APP_TITLE}</h1>
-            <p>Stock + options + vesting + risk + scenarios, redesigned while preserving the original employee-portfolio workflow.</p>
+            <p>Un dashboard ejecutivo para acciones, opciones, vesting y escenarios: más claro, más visual y optimizado para desktop y móvil.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -541,9 +844,9 @@ def main() -> None:
 
     controls = st.container(border=True)
     with controls:
-        left, middle, right, actions = st.columns([1.2, 1.2, 1.2, 1.4], vertical_alignment="bottom")
+        left, middle, right, actions = st.columns([1.1, 1.1, 1.05, 1.55], vertical_alignment="bottom")
         with left:
-            st.session_state.ticker = st.text_input("Company ticker", st.session_state.ticker).upper().strip()
+            st.session_state.ticker = st.text_input("Company ticker", st.session_state.ticker, help="Default: PG (Procter & Gamble)").upper().strip()
         with middle:
             st.session_state.benchmark = st.text_input("Benchmark ETF/stock", st.session_state.benchmark).upper().strip()
         with right:
@@ -587,9 +890,14 @@ def main() -> None:
 
     with st.spinner("Loading market data from Yahoo Finance..."):
         history = fetch_history((ticker, benchmark), period)
+        full_history = fetch_history((ticker,), "max")
         company_data = get_ticker_frame(history, ticker)
+        full_company_data = get_ticker_frame(full_history, ticker)
         benchmark_data = get_ticker_frame(history, benchmark)
         profile = fetch_profile(ticker)
+
+    if full_company_data.empty:
+        full_company_data = company_data
 
     if company_data.empty:
         st.error(f"No market data found for `{ticker}` in the selected window. Check the ticker and try again.")
@@ -614,11 +922,13 @@ def main() -> None:
     kpi_cols[4].metric("Max drawdown", f"{metrics.max_drawdown:.2%}")
     kpi_cols[5].metric("Sharpe", f"{metrics.sharpe_ratio:.2f}")
 
-    overview_tab, portfolio_tab, scenarios_tab, projection_tab, data_tab = st.tabs(
-        ["📈 Market", "💼 Portfolio", "🎚️ Sensitivity", "🔮 Projection", "🧾 Data"]
+    overview_tab, portfolio_tab, vesting_tab, scenarios_tab, projection_tab, data_tab = st.tabs(
+        ["📈 Market", "💼 Portfolio Summary", "🗓️ Vesting", "🎚️ Sensitivity", "🔮 Projections", "🧾 Data"]
     )
 
     with overview_tab:
+        st.markdown("### Market analytics")
+        st.caption("Price action, benchmark comparison and risk views for the selected analysis window.")
         chart_col, benchmark_col = st.columns([1.25, 1], gap="large")
         with chart_col:
             st.plotly_chart(make_price_chart(company_data, ticker, currency), width="stretch", theme="streamlit")
@@ -627,6 +937,16 @@ def main() -> None:
                 st.warning(f"No comparison data found for `{benchmark}`.")
             else:
                 st.plotly_chart(make_comparison_chart(company_data, benchmark_data, ticker, benchmark), width="stretch", theme="streamlit")
+
+        risk_col1, risk_col2, risk_col3 = st.columns(3, gap="large")
+        with risk_col1:
+            st.plotly_chart(make_drawdown_chart(company_data), width="stretch", theme="streamlit")
+        with risk_col2:
+            st.plotly_chart(make_return_distribution_chart(company_data), width="stretch", theme="streamlit")
+        with risk_col3:
+            st.plotly_chart(make_rolling_volatility_chart(company_data), width="stretch", theme="streamlit")
+
+        st.markdown("#### Latest adjusted market data")
         st.dataframe(
             company_data.tail(10).sort_index(ascending=False),
             width="stretch",
@@ -661,31 +981,72 @@ def main() -> None:
         enriched_options = enrich_options(st.session_state.option_positions, metrics.last_price, date.today())
         values = portfolio_values(int(st.session_state.shares), enriched_options, metrics.last_price)
 
+        summary = portfolio_summary(int(st.session_state.shares), enriched_options, metrics.last_price)
+
+        st.markdown("### Executive position summary")
         value_cols = st.columns(5)
-        value_cols[0].metric("Stock value", f"{currency} {values['stock_value']:,.0f}")
-        value_cols[1].metric("Vested options", f"{currency} {values['vested_option_value']:,.0f}")
-        value_cols[2].metric("Total options", f"{currency} {values['total_option_value']:,.0f}")
+        value_cols[0].metric("Stock value", f"{currency} {values['stock_value']:,.0f}", f"{int(st.session_state.shares):,} shares")
+        value_cols[1].metric("Vested options", f"{currency} {values['vested_option_value']:,.0f}", f"{summary['vested_option_shares']:,.0f} option shares")
+        value_cols[2].metric("Total options", f"{currency} {values['total_option_value']:,.0f}", f"{summary['option_shares']:,.0f} option shares")
         value_cols[3].metric("Vested portfolio", f"{currency} {values['vested_portfolio']:,.0f}")
         value_cols[4].metric("Potential portfolio", f"{currency} {values['potential_portfolio']:,.0f}")
 
-        table_col, pie_col = st.columns([1.4, 1], gap="large")
-        with table_col:
-            st.dataframe(
-                enriched_options,
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "strike_price": st.column_config.NumberColumn(format=f"{currency} %.2f"),
-                    "intrinsic_value": st.column_config.NumberColumn(format=f"{currency} %.0f"),
-                    "moneyness_pct": st.column_config.NumberColumn("Moneyness", format="%.1f%%"),
-                    "is_vested": st.column_config.CheckboxColumn("Vested"),
-                },
-            )
-        with pie_col:
+        detail_cols = st.columns(6)
+        detail_cols[0].metric("Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}")
+        detail_cols[1].metric("Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}")
+        detail_cols[2].metric("ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", f"{summary['options_itm_pct']:.0%} of options")
+        detail_cols[3].metric("Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}")
+        detail_cols[4].metric("Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}", "shares + options")
+        detail_cols[5].metric("Unvested options", f"{summary['unvested_option_shares']:,.0f}")
+
+        chart_a, chart_b = st.columns([1.05, 1], gap="large")
+        with chart_a:
+            st.plotly_chart(make_waterfall_chart(values, currency), width="stretch", theme="streamlit")
+        with chart_b:
             st.plotly_chart(make_allocation_chart(values), width="stretch", theme="streamlit")
+
+        st.markdown("#### Option grant detail")
+        st.dataframe(
+            enriched_options,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "shares": st.column_config.NumberColumn("Option shares", format="%d"),
+                "strike_price": st.column_config.NumberColumn("Strike", format=f"{currency} %.2f"),
+                "intrinsic_value": st.column_config.NumberColumn("Intrinsic value", format=f"{currency} %.0f"),
+                "moneyness_pct": st.column_config.NumberColumn("Moneyness", format="%.1f%%"),
+                "is_vested": st.column_config.CheckboxColumn("Vested"),
+                "vested_on": st.column_config.DateColumn("Fully vested on"),
+            },
+        )
 
     enriched_options = enrich_options(st.session_state.option_positions, metrics.last_price, date.today())
     has_portfolio = int(st.session_state.shares) > 0 or bool((enriched_options["shares"] > 0).any())
+
+    with vesting_tab:
+        st.markdown("### Vesting schedule")
+        st.caption("Visualize when option grants become fully vested and how total vested option exposure accumulates over time.")
+        vest_a, vest_b = st.columns(2, gap="large")
+        with vest_a:
+            st.plotly_chart(make_vesting_schedule_chart(enriched_options), width="stretch", theme="streamlit")
+        with vest_b:
+            st.plotly_chart(make_cumulative_vesting_chart(enriched_options), width="stretch", theme="streamlit")
+
+        if (enriched_options["shares"] > 0).any():
+            schedule_view = enriched_options[enriched_options["shares"] > 0].sort_values("vested_on").copy()
+            schedule_view["days_to_vest"] = (pd.to_datetime(schedule_view["vested_on"]) - pd.Timestamp.today().normalize()).dt.days
+            st.dataframe(
+                schedule_view[["grant_date", "vested_on", "days_to_vest", "shares", "strike_price", "is_vested", "intrinsic_value"]],
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "strike_price": st.column_config.NumberColumn("Strike", format=f"{currency} %.2f"),
+                    "intrinsic_value": st.column_config.NumberColumn("Intrinsic", format=f"{currency} %.0f"),
+                    "is_vested": st.column_config.CheckboxColumn("Vested"),
+                },
+            )
+        else:
+            st.info("Add at least one option grant to see the vesting schedule.")
 
     with scenarios_tab:
         if not has_portfolio:
@@ -700,45 +1061,109 @@ def main() -> None:
 
     with projection_tab:
         if not has_portfolio:
-            st.info("Add shares or option grants to run a Monte Carlo projection.")
+            st.info("Add shares or option grants to run Monte Carlo projections.")
         else:
-            sim_col1, sim_col2, sim_col3, sim_col4 = st.columns(4)
-            projection_years = sim_col1.slider("Projection years", 1, 10, 5)
-            simulations = sim_col2.slider("Simulations", 1_000, 50_000, 10_000, step=1_000)
-            use_historical = sim_col3.toggle("Use historical inputs", value=True)
-            seed = sim_col4.number_input("Random seed", min_value=1, value=42, step=1)
+            st.markdown("### Multi-scenario Monte Carlo projection")
+            st.caption(
+                "Compare several historical regimes at once. Randomness is handled internally with a fixed reproducible seed, so you do not need to manage it."
+            )
+            sim_col1, sim_col2, sim_col3 = st.columns(3)
+            projection_years = sim_col1.slider("Projection horizon", 1, 10, 5, help="Years projected from today.")
+            simulations = sim_col2.slider("Simulation paths per scenario", 1_000, 50_000, 12_000, step=1_000)
+            scenario_count = sim_col3.slider("Scenarios to display", 3, 5, 3, help="Show 3 scenarios by default, or include 5Y and custom too.")
 
-            if use_historical:
-                mu = metrics.annual_return
-                sigma = max(metrics.annual_volatility, 0.0001)
-                st.caption(f"Using {time_window} annualized return {mu:.2%} and volatility {sigma:.2%}.")
-            else:
-                input_col1, input_col2 = st.columns(2)
-                mu = input_col1.number_input("Expected annual return (%)", value=10.0) / 100
-                sigma = max(input_col2.number_input("Expected annual volatility (%)", value=15.0, min_value=0.0) / 100, 0.0001)
+            custom_col1, custom_col2 = st.columns(2)
+            custom_mu = custom_col1.number_input(
+                "Custom expected annual return (%)",
+                value=float(metrics.annual_return * 100),
+                help="Default is the annualized return from the current selected analysis window.",
+            ) / 100
+            custom_sigma = max(
+                custom_col2.number_input(
+                    "Custom expected annual volatility (%)",
+                    value=float(metrics.annual_volatility * 100),
+                    min_value=0.0,
+                    help="Default is the annualized volatility from the current selected analysis window.",
+                ) / 100,
+                0.0001,
+            )
+
+            scenarios = scenario_metrics_from_history(full_company_data, company_data, custom_mu, custom_sigma)
+            preferred = ["Full history", "10Y history", "5Y history", "3Y history", "Custom / selected"][:scenario_count]
+            selected_scenarios = st.multiselect(
+                "Projection scenarios",
+                options=scenarios["scenario"].tolist(),
+                default=[name for name in preferred if name in scenarios["scenario"].tolist()],
+                help="Full history uses all available Yahoo Finance data (as far back as available for the ticker).",
+            )
+            scenario_subset = scenarios[scenarios["scenario"].isin(selected_scenarios)]
+            scenario_display = scenario_subset.assign(
+                annual_return_pct=scenario_subset["annual_return"] * 100,
+                annual_volatility_pct=scenario_subset["annual_volatility"] * 100,
+            )[["scenario", "annual_return_pct", "annual_volatility_pct", "start_date", "observations"]]
+
+            scen_col1, scen_col2 = st.columns([1.1, 1], gap="large")
+            with scen_col1:
+                st.dataframe(
+                    scenario_display,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "scenario": st.column_config.TextColumn("Scenario"),
+                        "annual_return_pct": st.column_config.NumberColumn("Ann. return", format="%.2f%%"),
+                        "annual_volatility_pct": st.column_config.NumberColumn("Ann. vol", format="%.2f%%"),
+                        "start_date": st.column_config.TextColumn("Start"),
+                        "observations": st.column_config.NumberColumn("Trading days", format="%d"),
+                    },
+                )
+            with scen_col2:
+                st.plotly_chart(make_scenario_scatter(scenario_subset), width="stretch", theme="streamlit")
 
             active_options = enriched_options[enriched_options["shares"] > 0]
-            results = run_monte_carlo(
-                metrics.last_price,
-                int(st.session_state.shares),
-                tuple(active_options["shares"].astype(int)),
-                tuple(active_options["strike_price"].astype(float)),
-                float(mu),
-                float(sigma),
-                int(projection_years),
-                int(simulations),
-                int(seed),
-            )
-            summary_cols = st.columns(4)
-            summary_cols[0].metric("Median final", f"{currency} {results['percentiles'][50][-1]:,.0f}")
-            summary_cols[1].metric("5–95% range", f"{currency} {results['percentiles'][5][-1]:,.0f} – {results['percentiles'][95][-1]:,.0f}")
-            summary_cols[2].metric("Mean final", f"{currency} {results['mean_final']:,.0f}")
-            summary_cols[3].metric("P(gain)", f"{results['probability_gain']:.1%}")
+            results_by_scenario: dict[str, dict[str, Any]] = {}
+            for index, row in enumerate(scenario_subset.itertuples(index=False)):
+                results_by_scenario[row.scenario] = run_monte_carlo(
+                    metrics.last_price,
+                    int(st.session_state.shares),
+                    tuple(active_options["shares"].astype(int)),
+                    tuple(active_options["strike_price"].astype(float)),
+                    float(row.annual_return),
+                    float(row.annual_volatility),
+                    int(projection_years),
+                    int(simulations),
+                    20_260_513 + index,
+                )
 
-            st.plotly_chart(make_projection_chart(results, int(projection_years)), width="stretch", theme="streamlit")
-            with st.expander("Show simulated stock-price paths"):
-                paths_to_show = st.slider("Paths to display", 10, min(250, int(simulations)), 80, step=10)
-                st.plotly_chart(make_simulation_paths_chart(results, paths_to_show), width="stretch", theme="streamlit")
+            if not results_by_scenario:
+                st.warning("Select at least one scenario to project.")
+            else:
+                st.plotly_chart(make_multi_projection_chart(results_by_scenario, int(projection_years)), width="stretch", theme="streamlit")
+                summary = projection_summary_table(results_by_scenario, currency)
+                best = summary.loc[summary["Median final"].idxmax()]
+                worst = summary.loc[summary["Median final"].idxmin()]
+                quick_cols = st.columns(4)
+                quick_cols[0].metric("Best median scenario", str(best["Scenario"]), f"{currency} {best['Median final']:,.0f}")
+                quick_cols[1].metric("Most conservative median", str(worst["Scenario"]), f"{currency} {worst['Median final']:,.0f}")
+                quick_cols[2].metric("Highest P(gain)", str(summary.loc[summary["P(gain)"].idxmax(), "Scenario"]))
+                quick_cols[3].metric("Scenarios compared", f"{len(results_by_scenario)}")
+                st.dataframe(
+                    summary,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "P5 final": st.column_config.NumberColumn("P5 final", format=f"{currency} %.0f"),
+                        "Median final": st.column_config.NumberColumn("Median final", format=f"{currency} %.0f"),
+                        "P95 final": st.column_config.NumberColumn("P95 final", format=f"{currency} %.0f"),
+                        "Mean final": st.column_config.NumberColumn("Mean final", format=f"{currency} %.0f"),
+                        "P(gain)": st.column_config.NumberColumn("P(gain)", format="%.1f%%"),
+                        "P(double)": st.column_config.NumberColumn("P(double)", format="%.1f%%"),
+                    },
+                )
+
+                with st.expander("Show sample simulated stock-price paths for the first selected scenario"):
+                    first_results = next(iter(results_by_scenario.values()))
+                    paths_to_show = st.slider("Paths to display", 10, min(250, int(simulations)), 80, step=10)
+                    st.plotly_chart(make_simulation_paths_chart(first_results, paths_to_show), width="stretch", theme="streamlit")
 
     with data_tab:
         st.markdown("#### Cached data inputs")
