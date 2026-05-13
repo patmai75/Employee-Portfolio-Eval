@@ -535,22 +535,38 @@ def portfolio_summary(shares: int, options: pd.DataFrame, price: float) -> dict[
 
 
 def make_waterfall_chart(values: dict[str, float], currency: str) -> go.Figure:
+    unvested_option_value = max(0.0, values["total_option_value"] - values["vested_option_value"])
     fig = go.Figure(
         go.Waterfall(
             name="Portfolio build-up",
             orientation="v",
-            measure=["relative", "relative", "total"],
-            x=["Shares", "Options", "Potential total"],
-            y=[values["stock_value"], values["total_option_value"], values["potential_portfolio"]],
+            measure=["relative", "relative", "total", "relative", "total"],
+            x=["Stock value", "Vested options", "Current value", "Unvested options", "Potential value"],
+            y=[
+                values["stock_value"],
+                values["vested_option_value"],
+                values["vested_portfolio"],
+                unvested_option_value,
+                values["potential_portfolio"],
+            ],
+            text=[
+                f"{currency} {values['stock_value']:,.0f}",
+                f"{currency} {values['vested_option_value']:,.0f}",
+                f"{currency} {values['vested_portfolio']:,.0f}",
+                f"{currency} {unvested_option_value:,.0f}",
+                f"{currency} {values['potential_portfolio']:,.0f}",
+            ],
+            textposition="outside",
             connector={"line": {"color": "rgba(100,116,139,.45)"}},
             increasing={"marker": {"color": "#2563eb"}},
             totals={"marker": {"color": "#14b8a6"}},
+            hovertemplate="%{x}<br>%{text}<extra></extra>",
         )
     )
     fig.update_layout(
-        title="How your potential portfolio value is built",
+        title="Current value vs total potential portfolio value",
         yaxis={"tickprefix": f"{currency} ", "separatethousands": True},
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        margin={"l": 20, "r": 20, "t": 80, "b": 40},
     )
     return fig
 
@@ -558,31 +574,62 @@ def make_waterfall_chart(values: dict[str, float], currency: str) -> go.Figure:
 def make_vesting_schedule_chart(options: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if options.empty or not (options["shares"] > 0).any():
-        fig.update_layout(title="Vesting schedule", annotations=[{"text": "Add option grants to see vesting", "showarrow": False}])
+        fig.update_layout(title="Option vesting schedule", annotations=[{"text": "Add option grants to see vesting", "showarrow": False}])
         return fig
 
     schedule = options[options["shares"] > 0].copy()
     schedule["status"] = np.where(schedule["is_vested"], "Vested", "Unvested")
-    schedule["label"] = schedule["vested_on"].astype(str)
+    grouped = (
+        schedule.groupby(["vested_on", "status"], as_index=False)
+        .agg(
+            shares=("shares", "sum"),
+            intrinsic_value=("intrinsic_value", "sum"),
+            avg_strike=("strike_price", "mean"),
+            grants=("shares", "size"),
+        )
+        .sort_values("vested_on")
+    )
     colors = {"Vested": "#14b8a6", "Unvested": "#f59e0b"}
-    for status, frame in schedule.groupby("status"):
+    for status, frame in grouped.groupby("status", sort=False):
         fig.add_trace(
             go.Bar(
                 x=frame["vested_on"],
                 y=frame["shares"],
                 name=status,
-                marker_color=colors[status],
-                customdata=np.stack([frame["strike_price"], frame["intrinsic_value"]], axis=1),
-                hovertemplate="Vests %{x}<br>Shares %{y:,.0f}<br>Strike $%{customdata[0]:,.2f}<br>Intrinsic $%{customdata[1]:,.0f}<extra></extra>",
+                marker={"color": colors[status], "line": {"color": "rgba(15,23,42,.16)", "width": 1}},
+                text=frame["shares"].map(lambda value: f"{value:,.0f}"),
+                textposition="outside",
+                customdata=np.stack([frame["avg_strike"], frame["intrinsic_value"], frame["grants"]], axis=1),
+                hovertemplate=(
+                    "Vests %{x|%b %d, %Y}<br>"
+                    "Option shares %{y:,.0f}<br>"
+                    "Avg strike $%{customdata[0]:,.2f}<br>"
+                    "Intrinsic value $%{customdata[1]:,.0f}<br>"
+                    "Grants %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
+    today = pd.Timestamp.today().normalize()
+    fig.add_shape(
+        type="line",
+        x0=today,
+        x1=today,
+        y0=0,
+        y1=1,
+        xref="x",
+        yref="paper",
+        line={"color": "#ef4444", "width": 2, "dash": "dash"},
+    )
+    fig.add_annotation(x=today, y=1.04, xref="x", yref="paper", text="Today", showarrow=False, font={"color": "#ef4444"})
     fig.update_layout(
-        title="Option vesting schedule by vest date",
+        title="Option vesting schedule by date",
         xaxis_title="Vesting date",
-        yaxis_title="Option shares",
+        yaxis_title="Option shares vesting",
         barmode="stack",
+        bargap=0.22,
         hovermode="x unified",
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        margin={"l": 20, "r": 20, "t": 80, "b": 30},
     )
     return fig
 
@@ -602,14 +649,37 @@ def make_cumulative_vesting_chart(options: pd.DataFrame) -> go.Figure:
             mode="lines+markers",
             fill="tozeroy",
             line={"color": "#1d4ed8", "width": 3},
+            marker={"size": 9, "color": "#1d4ed8"},
             name="Cumulative vested shares",
+            hovertemplate="%{x|%b %d, %Y}<br>Cumulative shares %{y:,.0f}<extra></extra>",
         )
+    )
+    today = pd.Timestamp.today().normalize()
+    vested_today = int(schedule.loc[pd.to_datetime(schedule["vested_on"]) <= today, "shares"].sum())
+    fig.add_shape(
+        type="line",
+        x0=today,
+        x1=today,
+        y0=0,
+        y1=1,
+        xref="x",
+        yref="paper",
+        line={"color": "#ef4444", "width": 2, "dash": "dash"},
+    )
+    fig.add_annotation(
+        x=today,
+        y=1.04,
+        xref="x",
+        yref="paper",
+        text=f"Today · {vested_today:,.0f} vested",
+        showarrow=False,
+        font={"color": "#ef4444"},
     )
     fig.update_layout(
         title="Cumulative vesting curve",
         xaxis_title="Vesting date",
         yaxis_title="Cumulative option shares",
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        margin={"l": 20, "r": 20, "t": 80, "b": 30},
     )
     return fig
 
@@ -980,18 +1050,6 @@ def main() -> None:
         with risk_col3:
             st.plotly_chart(make_rolling_volatility_chart(company_data), width="stretch", theme="streamlit")
 
-        st.markdown("#### Latest adjusted market data")
-        st.dataframe(
-            company_data.tail(10).sort_index(ascending=False),
-            width="stretch",
-            column_config={
-                "Open": st.column_config.NumberColumn(format=f"{currency} %.2f"),
-                "High": st.column_config.NumberColumn(format=f"{currency} %.2f"),
-                "Low": st.column_config.NumberColumn(format=f"{currency} %.2f"),
-                "Close": st.column_config.NumberColumn(format=f"{currency} %.2f"),
-                "Volume": st.column_config.NumberColumn(format="%d"),
-            },
-        )
 
     with portfolio_tab:
         st.session_state.shares = st.number_input(
@@ -1105,10 +1163,9 @@ def main() -> None:
             st.caption(
                 "Compare several historical regimes at once. Randomness is handled internally with a fixed reproducible seed, so you do not need to manage it."
             )
-            sim_col1, sim_col2, sim_col3 = st.columns(3)
+            sim_col1, sim_col2 = st.columns(2)
             projection_years = sim_col1.slider("Projection horizon", 1, 10, 5, help="Years projected from today.")
             simulations = sim_col2.slider("Simulation paths per scenario", 1_000, 50_000, 12_000, step=1_000)
-            scenario_count = sim_col3.slider("Scenarios to display", 3, 5, 3, help="Show 3 scenarios by default, or include 5Y and custom too.")
 
             custom_col1, custom_col2 = st.columns(2)
             custom_mu = custom_col1.number_input(
@@ -1127,12 +1184,12 @@ def main() -> None:
             )
 
             scenarios = scenario_metrics_from_history(full_company_data, company_data, custom_mu, custom_sigma)
-            preferred = ["Full history", "10Y history", "5Y history", "3Y history", "Custom / selected"][:scenario_count]
+            all_scenarios = scenarios["scenario"].tolist()
             selected_scenarios = st.multiselect(
                 "Projection scenarios",
-                options=scenarios["scenario"].tolist(),
-                default=[name for name in preferred if name in scenarios["scenario"].tolist()],
-                help="Full history uses all available Yahoo Finance data (as far back as available for the ticker).",
+                options=all_scenarios,
+                default=all_scenarios,
+                help="All available regimes are selected by default, including 3Y and Custom / selected.",
             )
             scenario_subset = scenarios[scenarios["scenario"].isin(selected_scenarios)]
             scenario_display = scenario_subset.assign(
