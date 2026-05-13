@@ -60,20 +60,35 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        html, body, [class*="css"] {font-size: 18px;}
-        .main .block-container {padding-top: 1.25rem; padding-bottom: 3rem; max-width: 1440px;}
-        h1, h2, h3 {letter-spacing: -0.035em;}
-        h2 {font-size: clamp(1.55rem, 2vw, 2.25rem) !important;}
-        h3 {font-size: clamp(1.25rem, 1.5vw, 1.65rem) !important;}
+        html, body, [class*="css"] {font-size: 16px;}
+        .main .block-container {padding-top: 1.15rem; padding-bottom: 3rem; max-width: 1480px;}
+        h1, h2, h3 {letter-spacing: -0.032em;}
+        h2 {font-size: clamp(1.38rem, 1.8vw, 2rem) !important;}
+        h3 {font-size: clamp(1.12rem, 1.35vw, 1.45rem) !important;}
         div[data-testid="stMetric"] {
-            background: linear-gradient(135deg, rgba(18, 25, 38, 0.075), rgba(65, 105, 225, 0.045));
-            border: 1px solid rgba(120, 144, 180, 0.22);
-            border-radius: 22px;
-            padding: 1.05rem 1.1rem;
-            box-shadow: 0 14px 35px rgba(15, 23, 42, 0.06);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.055), rgba(37, 99, 235, 0.035));
+            border: 1px solid rgba(120, 144, 180, 0.20);
+            border-radius: 18px;
+            padding: .78rem .82rem;
+            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.045);
+            min-height: 104px;
+            overflow: visible;
         }
-        div[data-testid="stMetricLabel"] p {font-size: 1.02rem; font-weight: 750;}
-        div[data-testid="stMetricValue"] {font-size: clamp(1.45rem, 2.3vw, 2.25rem); font-weight: 850;}
+        div[data-testid="stMetricLabel"] p {
+            font-size: .78rem;
+            font-weight: 800;
+            letter-spacing: .01em;
+            color: rgba(51, 65, 85, .92);
+            white-space: normal;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: clamp(1.02rem, 1.22vw, 1.38rem);
+            font-weight: 850;
+            line-height: 1.08;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+        div[data-testid="stMetricDelta"] div {font-size: .78rem;}
         .portfolio-hero {
             padding: clamp(1.15rem, 3vw, 2.4rem);
             border-radius: 30px;
@@ -82,8 +97,8 @@ st.markdown(
             margin-bottom: 1rem;
             box-shadow: 0 24px 55px rgba(29, 78, 216, 0.23);
         }
-        .portfolio-hero h1 {margin: 0; font-size: clamp(2.15rem, 5vw, 4.6rem); line-height: .95;}
-        .portfolio-hero p {margin: .75rem 0 0 0; opacity: .93; font-size: clamp(1.02rem, 2vw, 1.35rem); max-width: 980px;}
+        .portfolio-hero h1 {margin: 0; font-size: clamp(1.9rem, 4.2vw, 4rem); line-height: .98;}
+        .portfolio-hero p {margin: .75rem 0 0 0; opacity: .93; font-size: clamp(.98rem, 1.65vw, 1.22rem); max-width: 1040px;}
         .section-card {
             border: 1px solid rgba(148, 163, 184, .25);
             border-radius: 24px;
@@ -92,10 +107,10 @@ st.markdown(
         }
         .small-note {font-size: .95rem; opacity: .75;}
         @media (max-width: 760px) {
-            html, body, [class*="css"] {font-size: 16px;}
+            html, body, [class*="css"] {font-size: 15px;}
             .main .block-container {padding-left: .85rem; padding-right: .85rem;}
             div[data-testid="column"] {width: 100% !important; flex: 1 1 100% !important;}
-            div[data-testid="stMetric"] {padding: .9rem; border-radius: 18px;}
+            div[data-testid="stMetric"] {padding: .75rem; border-radius: 16px; min-height: auto;}
         }
     </style>
     """,
@@ -388,7 +403,7 @@ def make_sensitivity_chart(shares: int, options: pd.DataFrame, current_price: fl
     )
     fig.update_layout(
         title="Sensitivity of potential portfolio value",
-        xaxis_title="Stock price move",
+        xaxis_title="Stock price move (%)",
         yaxis_title="Potential value",
         yaxis={"tickprefix": "$", "separatethousands": True},
         margin={"l": 20, "r": 20, "t": 70, "b": 20},
@@ -620,7 +635,7 @@ def make_return_distribution_chart(data: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         title="Distribution of daily returns",
         xaxis={"title": "Daily return", "tickformat": ".1%"},
-        yaxis_title="Trading days",
+        yaxis_title="Observations",
         margin={"l": 20, "r": 20, "t": 70, "b": 20},
     )
     return fig
@@ -672,25 +687,36 @@ def scenario_metrics_from_history(full_data: pd.DataFrame, selected_data: pd.Dat
 
 
 def make_scenario_scatter(scenarios: pd.DataFrame) -> go.Figure:
+    """Institutional return/volatility comparison without bubble sizing."""
     fig = go.Figure()
     if scenarios.empty:
         return fig
+
     fig.add_trace(
-        go.Scatter(
-            x=scenarios["annual_volatility"],
+        go.Bar(
+            x=scenarios["scenario"],
             y=scenarios["annual_return"],
-            mode="markers+text",
-            text=scenarios["scenario"],
-            textposition="top center",
-            marker={"size": np.clip(scenarios["observations"] / 55, 14, 44), "color": "#2563eb", "opacity": .78},
-            hovertemplate="%{text}<br>Return %{y:.2%}<br>Volatility %{x:.2%}<extra></extra>",
+            name="Annual return",
+            marker_color="#1d4ed8",
+            hovertemplate="%{x}<br>Return %{y:.2%}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=scenarios["scenario"],
+            y=scenarios["annual_volatility"],
+            name="Annual volatility",
+            marker_color="#14b8a6",
+            hovertemplate="%{x}<br>Volatility %{y:.2%}<extra></extra>",
         )
     )
     fig.update_layout(
-        title="Scenario return/volatility map",
-        xaxis={"title": "Annual volatility", "tickformat": ".0%"},
-        yaxis={"title": "Annual return", "tickformat": ".0%"},
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        title="Scenario assumptions: annual return vs volatility",
+        xaxis_title="",
+        yaxis={"title": "Annualized rate", "tickformat": ".0%"},
+        barmode="group",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+        margin={"l": 20, "r": 20, "t": 75, "b": 20},
     )
     return fig
 
@@ -836,7 +862,7 @@ def main() -> None:
         f"""
         <div class="portfolio-hero">
             <h1>💼 {APP_TITLE}</h1>
-            <p>Un dashboard ejecutivo para acciones, opciones, vesting y escenarios: más claro, más visual y optimizado para desktop y móvil.</p>
+            <p>Convierte tu compensación accionaria en una vista institucional: valor actual, opciones, vesting, riesgo y escenarios futuros en un solo lugar.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -914,13 +940,14 @@ def main() -> None:
     if meta:
         st.caption(meta)
 
-    kpi_cols = st.columns(6)
-    kpi_cols[0].metric("Last price", f"{currency} {metrics.last_price:,.2f}", f"{price_delta_pct:+.2%}")
-    kpi_cols[1].metric("Window return", f"{metrics.cumulative_return:+.2%}")
-    kpi_cols[2].metric("Annual return", f"{metrics.annual_return:+.2%}")
-    kpi_cols[3].metric("Annual volatility", f"{metrics.annual_volatility:.2%}")
-    kpi_cols[4].metric("Max drawdown", f"{metrics.max_drawdown:.2%}")
-    kpi_cols[5].metric("Sharpe", f"{metrics.sharpe_ratio:.2f}")
+    kpi_top = st.columns(3)
+    kpi_top[0].metric("Last price", f"{currency} {metrics.last_price:,.2f}", f"{price_delta_pct:+.2%}")
+    kpi_top[1].metric("Window return", f"{metrics.cumulative_return:+.2%}")
+    kpi_top[2].metric("Annual return", f"{metrics.annual_return:+.2%}")
+    kpi_bottom = st.columns(3)
+    kpi_bottom[0].metric("Annual volatility", f"{metrics.annual_volatility:.2%}")
+    kpi_bottom[1].metric("Max drawdown", f"{metrics.max_drawdown:.2%}")
+    kpi_bottom[2].metric("Sharpe ratio", f"{metrics.sharpe_ratio:.2f}")
 
     overview_tab, portfolio_tab, vesting_tab, scenarios_tab, projection_tab, data_tab = st.tabs(
         ["📈 Market", "💼 Portfolio Summary", "🗓️ Vesting", "🎚️ Sensitivity", "🔮 Projections", "🧾 Data"]
@@ -963,7 +990,8 @@ def main() -> None:
         st.session_state.shares = st.number_input(
             "Number of shares", min_value=0, value=int(st.session_state.shares), step=1
         )
-        st.markdown("#### Option grants")
+        st.markdown("#### Option grants (editable)")
+        st.caption("Edit grants directly in the table: add rows, change quantities, strikes, grant dates, and vesting terms.")
         edited_options = st.data_editor(
             normalize_options(st.session_state.option_positions, metrics.last_price),
             num_rows="dynamic",
@@ -984,20 +1012,23 @@ def main() -> None:
         summary = portfolio_summary(int(st.session_state.shares), enriched_options, metrics.last_price)
 
         st.markdown("### Executive position summary")
-        value_cols = st.columns(5)
-        value_cols[0].metric("Stock value", f"{currency} {values['stock_value']:,.0f}", f"{int(st.session_state.shares):,} shares")
-        value_cols[1].metric("Vested options", f"{currency} {values['vested_option_value']:,.0f}", f"{summary['vested_option_shares']:,.0f} option shares")
-        value_cols[2].metric("Total options", f"{currency} {values['total_option_value']:,.0f}", f"{summary['option_shares']:,.0f} option shares")
-        value_cols[3].metric("Vested portfolio", f"{currency} {values['vested_portfolio']:,.0f}")
-        value_cols[4].metric("Potential portfolio", f"{currency} {values['potential_portfolio']:,.0f}")
+        value_top = st.columns(3)
+        value_top[0].metric("Stock value", f"{currency} {values['stock_value']:,.0f}", f"{int(st.session_state.shares):,} shares")
+        value_top[1].metric("Vested options", f"{currency} {values['vested_option_value']:,.0f}", f"{summary['vested_option_shares']:,.0f} option shares")
+        value_top[2].metric("Total options", f"{currency} {values['total_option_value']:,.0f}", f"{summary['option_shares']:,.0f} option shares")
+        value_bottom = st.columns(2)
+        value_bottom[0].metric("Vested portfolio", f"{currency} {values['vested_portfolio']:,.0f}")
+        value_bottom[1].metric("Potential portfolio", f"{currency} {values['potential_portfolio']:,.0f}")
 
-        detail_cols = st.columns(6)
-        detail_cols[0].metric("Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}")
-        detail_cols[1].metric("Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}")
-        detail_cols[2].metric("ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", f"{summary['options_itm_pct']:.0%} of options")
-        detail_cols[3].metric("Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}")
-        detail_cols[4].metric("Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}", "shares + options")
-        detail_cols[5].metric("Unvested options", f"{summary['unvested_option_shares']:,.0f}")
+        detail_top = st.columns(4)
+        detail_top[0].metric("Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}")
+        detail_top[1].metric("Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}")
+        detail_top[2].metric("ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", f"{summary['options_itm_pct']:.0%} of options")
+        detail_top[3].metric("Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}")
+        detail_bottom = st.columns(3)
+        detail_bottom[0].metric("Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}", "shares + options")
+        detail_bottom[1].metric("Unvested options", f"{summary['unvested_option_shares']:,.0f}")
+        detail_bottom[2].metric("Option intrinsic value", f"{currency} {summary['option_intrinsic_value']:,.0f}")
 
         chart_a, chart_b = st.columns([1.05, 1], gap="large")
         with chart_a:
@@ -1075,15 +1106,15 @@ def main() -> None:
             custom_col1, custom_col2 = st.columns(2)
             custom_mu = custom_col1.number_input(
                 "Custom expected annual return (%)",
-                value=float(metrics.annual_return * 100),
-                help="Default is the annualized return from the current selected analysis window.",
+                value=10.0,
+                help="Institutional base-case default. Adjust if you want a custom forward-looking return.",
             ) / 100
             custom_sigma = max(
                 custom_col2.number_input(
                     "Custom expected annual volatility (%)",
-                    value=float(metrics.annual_volatility * 100),
+                    value=15.0,
                     min_value=0.0,
-                    help="Default is the annualized volatility from the current selected analysis window.",
+                    help="Institutional base-case default. Adjust if you want a custom forward-looking volatility.",
                 ) / 100,
                 0.0001,
             )
@@ -1100,7 +1131,7 @@ def main() -> None:
             scenario_display = scenario_subset.assign(
                 annual_return_pct=scenario_subset["annual_return"] * 100,
                 annual_volatility_pct=scenario_subset["annual_volatility"] * 100,
-            )[["scenario", "annual_return_pct", "annual_volatility_pct", "start_date", "observations"]]
+            )[["scenario", "annual_return_pct", "annual_volatility_pct", "start_date"]]
 
             scen_col1, scen_col2 = st.columns([1.1, 1], gap="large")
             with scen_col1:
@@ -1112,8 +1143,7 @@ def main() -> None:
                         "scenario": st.column_config.TextColumn("Scenario"),
                         "annual_return_pct": st.column_config.NumberColumn("Ann. return", format="%.2f%%"),
                         "annual_volatility_pct": st.column_config.NumberColumn("Ann. vol", format="%.2f%%"),
-                        "start_date": st.column_config.TextColumn("Start"),
-                        "observations": st.column_config.NumberColumn("Trading days", format="%d"),
+                        "start_date": st.column_config.TextColumn("Data starts"),
                     },
                 )
             with scen_col2:
@@ -1160,10 +1190,11 @@ def main() -> None:
                     },
                 )
 
-                with st.expander("Show sample simulated stock-price paths for the first selected scenario"):
-                    first_results = next(iter(results_by_scenario.values()))
-                    paths_to_show = st.slider("Paths to display", 10, min(250, int(simulations)), 80, step=10)
-                    st.plotly_chart(make_simulation_paths_chart(first_results, paths_to_show), width="stretch", theme="streamlit")
+                st.markdown("#### Sample simulated stock-price paths")
+                st.caption("Displayed for the first selected scenario so you can inspect the dispersion behind the projection—not hidden in an expander.")
+                first_results = next(iter(results_by_scenario.values()))
+                paths_to_show = st.slider("Paths to display", 10, min(250, int(simulations)), 80, step=10)
+                st.plotly_chart(make_simulation_paths_chart(first_results, paths_to_show), width="stretch", theme="streamlit")
 
     with data_tab:
         st.markdown("#### Cached data inputs")
