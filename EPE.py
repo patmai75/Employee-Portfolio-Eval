@@ -590,12 +590,16 @@ def make_vesting_schedule_chart(options: pd.DataFrame) -> go.Figure:
         .sort_values("vested_on")
     )
     colors = {"Vested": "#14b8a6", "Unvested": "#f59e0b"}
+    # Plotly uses milliseconds for bar widths on date axes. A fixed 18-day width
+    # keeps isolated vesting dates from rendering as oversized columns.
+    bar_width_ms = 18 * 24 * 60 * 60 * 1000
     for status, frame in grouped.groupby("status", sort=False):
         fig.add_trace(
             go.Bar(
                 x=frame["vested_on"],
                 y=frame["shares"],
                 name=status,
+                width=bar_width_ms,
                 marker={"color": colors[status], "line": {"color": "rgba(15,23,42,.16)", "width": 1}},
                 text=frame["shares"].map(lambda value: f"{value:,.0f}"),
                 textposition="outside",
@@ -626,7 +630,7 @@ def make_vesting_schedule_chart(options: pd.DataFrame) -> go.Figure:
         xaxis_title="Vesting date",
         yaxis_title="Option shares vesting",
         barmode="stack",
-        bargap=0.22,
+        bargap=0.62,
         hovermode="x unified",
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
         margin={"l": 20, "r": 20, "t": 80, "b": 30},
