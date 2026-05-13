@@ -764,8 +764,15 @@ def make_multi_projection_chart(results_by_scenario: dict[str, dict[str, Any]], 
         xaxis_title="Years from today",
         yaxis={"title": "Projected portfolio value", "tickprefix": "$", "separatethousands": True},
         hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
-        margin={"l": 20, "r": 20, "t": 85, "b": 20},
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.20,
+            "xanchor": "center",
+            "x": 0.5,
+            "bgcolor": "rgba(255,255,255,0)",
+        },
+        margin={"l": 20, "r": 20, "t": 85, "b": 110},
     )
     return fig
 
@@ -1190,11 +1197,24 @@ def main() -> None:
                     },
                 )
 
-                st.markdown("#### Sample simulated stock-price paths")
-                st.caption("Displayed for the first selected scenario so you can inspect the dispersion behind the projection—not hidden in an expander.")
-                first_results = next(iter(results_by_scenario.values()))
+                st.markdown("#### Custom scenario simulated stock-price paths")
+                st.caption(
+                    f"These paths use the Custom inputs above: {custom_mu:.1%} expected annual return and "
+                    f"{custom_sigma:.1%} annual volatility. They are shown separately from the selected historical regimes."
+                )
+                custom_path_results = run_monte_carlo(
+                    metrics.last_price,
+                    int(st.session_state.shares),
+                    tuple(active_options["shares"].astype(int)),
+                    tuple(active_options["strike_price"].astype(float)),
+                    float(custom_mu),
+                    float(custom_sigma),
+                    int(projection_years),
+                    int(simulations),
+                    20_260_599,
+                )
                 paths_to_show = st.slider("Paths to display", 10, min(250, int(simulations)), 80, step=10)
-                st.plotly_chart(make_simulation_paths_chart(first_results, paths_to_show), width="stretch", theme="streamlit")
+                st.plotly_chart(make_simulation_paths_chart(custom_path_results, paths_to_show), width="stretch", theme="streamlit")
 
     with data_tab:
         st.markdown("#### Cached data inputs")
