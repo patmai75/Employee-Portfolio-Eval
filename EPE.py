@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -867,6 +868,209 @@ def projection_summary_table(results_by_scenario: dict[str, dict[str, Any]], cur
         )
     return pd.DataFrame(rows)
 
+
+
+def pdf_dependencies_available() -> bool:
+    return importlib.util.find_spec("reportlab") is not None
+
+
+def figure_to_png_bytes(fig: go.Figure, width: int = 720, height: int = 420) -> bytes | None:
+    """Render a Plotly figure to PNG bytes when Kaleido is installed and usable."""
+    if importlib.util.find_spec("kaleido") is None:
+        return None
+    try:
+        return fig.to_image(format="png", width=width, height=height, scale=2)
+    except Exception:
+        return None
+
+
+def build_one_pager_pdf(
+    *,
+    ticker: str,
+    company_name: str,
+    currency: str,
+    metrics: MarketMetrics,
+    values: dict[str, float],
+    summary: dict[str, float],
+    options: pd.DataFrame,
+    waterfall_fig: go.Figure,
+    vesting_fig: go.Figure,
+    projection_fig: go.Figure | None,
+    projection_summary: pd.DataFrame | None,
+    custom_mu: float,
+    custom_sigma: float,
+) -> bytes:
+    """Build a compact institutional one-page PDF report."""
+    if not pdf_dependencies_available():
+        raise RuntimeError("PDF export requires reportlab. Install dependencies from requirements.txt.")
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        rightMargin=0.28 * inch,
+        leftMargin=0.28 * inch,
+        topMargin=0.25 * inch,
+        bottomMargin=0.25 * inch,
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ReportTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=20,
+        textColor=colors.HexColor("#0f172a"),
+        spaceAfter=2,
+    )
+    subtitle_style = ParagraphStyle(
+        "ReportSubtitle",
+        parent=styles["Normal"],
+        fontSize=8.5,
+        leading=10,
+        textColor=colors.HexColor("#475569"),
+    )
+    section_style = ParagraphStyle(
+        "Section",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=9.5,
+        leading=11,
+        textColor=colors.HexColor("#1d4ed8"),
+        spaceBefore=4,
+        spaceAfter=3,
+    )
+    small_style = ParagraphStyle("Small", parent=styles["Normal"], fontSize=7.4, leading=8.5)
+
+    def money(value: float) -> str:
+        return f"{currency} {value:,.0f}"
+
+    def pct(value: float) -> str:
+        return f"{value:.1%}"
+
+    story: list[Any] = []
+    story.append(Paragraph(f"{company_name} ({ticker.upper()}) · Employee Portfolio One-Pager", title_style))
+    story.append(
+        Paragraph(
+            f"Generated {pd.Timestamp.today().strftime('%b %d, %Y')} · Educational model, not financial/tax/legal advice",
+            subtitle_style,
+        )
+    )
+    story.append(Spacer(1, 4))
+
+    kpi_data = [
+        ["Last price", f"{currency} {metrics.last_price:,.2f}", "Window return", pct(metrics.cumulative_return), "Ann. volatility", pct(metrics.annual_volatility), "Sharpe", f"{metrics.sharpe_ratio:.2f}"],
+        ["Stock value", money(values["stock_value"]), "Vested portfolio", money(values["vested_portfolio"]), "Potential portfolio", money(values["potential_portfolio"]), "Max drawdown", pct(metrics.max_drawdown)],
+        ["Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Custom inputs", f"{custom_mu:.1%} / {custom_sigma:.1%}"],
+    ]
+    kpi_table = Table(kpi_data, colWidths=[0.95 * inch, 1.05 * inch] * 4)
+    kpi_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.2),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    story.append(kpi_table)
+    story.append(Spacer(1, 4))
+
+    chart_cells = []
+    for label, fig in [
+        ("Value bridge", waterfall_fig),
+        ("Vesting schedule", vesting_fig),
+        ("Projection scenarios", projection_fig),
+    ]:
+        image_bytes = figure_to_png_bytes(fig, width=620, height=320) if fig is not None else None
+        if image_bytes:
+            chart_cells.append(Image(io.BytesIO(image_bytes), width=3.25 * inch, height=1.68 * inch))
+        else:
+            chart_cells.append(Paragraph(f"<b>{label}</b><br/>Chart image renderer unavailable. Install kaleido to embed charts.", small_style))
+    charts = Table([chart_cells], colWidths=[3.32 * inch, 3.32 * inch, 3.32 * inch])
+    charts.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.25, colors.HexColor("#e2e8f0"))]))
+    story.append(charts)
+    story.append(Spacer(1, 4))
+
+    option_rows = [["Grant date", "Vests on", "Shares", "Strike", "Status", "Intrinsic"]]
+    option_view = options[options["shares"] > 0].sort_values("vested_on").head(6)
+    for row in option_view.itertuples():
+        option_rows.append(
+            [
+                row.grant_date.isoformat(),
+                row.vested_on.isoformat(),
+                f"{int(row.shares):,}",
+                f"{currency} {float(row.strike_price):,.2f}",
+                "Vested" if bool(row.is_vested) else "Unvested",
+                money(float(row.intrinsic_value)),
+            ]
+        )
+    if len(option_rows) == 1:
+        option_rows.append(["—", "—", "0", "—", "—", "—"])
+
+    projection_rows = [["Scenario", "P5 final", "Median final", "P95 final", "P(gain)"]]
+    if projection_summary is not None and not projection_summary.empty:
+        for _, row in projection_summary.head(5).iterrows():
+            projection_rows.append(
+                [
+                    str(row["Scenario"]),
+                    money(float(row["P5 final"])),
+                    money(float(row["Median final"])),
+                    money(float(row["P95 final"])),
+                    f"{float(row['P(gain)']):.1%}",
+                ]
+            )
+    else:
+        projection_rows.append(["Run projections", "—", "—", "—", "—"])
+
+    bottom = Table(
+        [
+            [Paragraph("Top option grants", section_style), Paragraph("Projection summary", section_style)],
+            [Table(option_rows), Table(projection_rows)],
+        ],
+        colWidths=[5.0 * inch, 5.0 * inch],
+    )
+    bottom.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#e2e8f0")),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    for nested in [bottom._cellvalues[1][0], bottom._cellvalues[1][1]]:
+        nested.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0f2fe")),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+                    ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+    story.append(bottom)
+    doc.build(story)
+    return buffer.getvalue()
+
 def make_simulation_paths_chart(results: dict[str, Any], paths_to_show: int) -> go.Figure:
     fig = go.Figure()
     time_axis = results["sample_time"]
@@ -1122,6 +1326,10 @@ def main() -> None:
 
     enriched_options = enrich_options(st.session_state.option_positions, metrics.last_price, date.today())
     has_portfolio = int(st.session_state.shares) > 0 or bool((enriched_options["shares"] > 0).any())
+    projection_summary_for_pdf: pd.DataFrame | None = None
+    projection_fig_for_pdf: go.Figure | None = None
+    custom_mu_for_pdf = 0.10
+    custom_sigma_for_pdf = 0.15
 
     with vesting_tab:
         st.markdown("### Vesting schedule")
@@ -1186,6 +1394,8 @@ def main() -> None:
                 ) / 100,
                 0.0001,
             )
+            custom_mu_for_pdf = float(custom_mu)
+            custom_sigma_for_pdf = float(custom_sigma)
 
             scenarios = scenario_metrics_from_history(full_company_data, company_data, custom_mu, custom_sigma)
             all_scenarios = scenarios["scenario"].tolist()
@@ -1235,8 +1445,10 @@ def main() -> None:
             if not results_by_scenario:
                 st.warning("Select at least one scenario to project.")
             else:
-                st.plotly_chart(make_multi_projection_chart(results_by_scenario, int(projection_years)), width="stretch", theme="streamlit")
+                projection_fig_for_pdf = make_multi_projection_chart(results_by_scenario, int(projection_years))
+                st.plotly_chart(projection_fig_for_pdf, width="stretch", theme="streamlit")
                 summary = projection_summary_table(results_by_scenario, currency)
+                projection_summary_for_pdf = summary
                 best = summary.loc[summary["Median final"].idxmax()]
                 worst = summary.loc[summary["Median final"].idxmin()]
                 quick_cols = st.columns(4)
@@ -1278,16 +1490,53 @@ def main() -> None:
                 st.plotly_chart(make_simulation_paths_chart(custom_path_results, paths_to_show), width="stretch", theme="streamlit")
 
     with data_tab:
-        st.markdown("#### Cached data inputs")
+        st.markdown("#### Exports")
         st.write("Market data is cached for 15 minutes; profile metadata is cached for 60 minutes.")
         st.json({"ticker": ticker.upper(), "benchmark": benchmark.upper(), "period": period, "profile": profile}, expanded=False)
-        st.download_button(
-            "Download adjusted price history",
-            data=company_data.to_csv().encode("utf-8"),
-            file_name=f"{ticker.upper()}_{period}_adjusted_history.csv",
-            mime="text/csv",
-            icon=":material/table:",
-        )
+
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            st.download_button(
+                "Download adjusted price history",
+                data=company_data.to_csv().encode("utf-8"),
+                file_name=f"{ticker.upper()}_{period}_adjusted_history.csv",
+                mime="text/csv",
+                icon=":material/table:",
+            )
+        with export_col2:
+            if not has_portfolio:
+                st.info("Add shares or option grants to enable the one-page PDF report.")
+            elif not pdf_dependencies_available():
+                st.info("PDF export is ready in code. Install `reportlab` and `kaleido` from requirements.txt to enable the one-page report download.")
+            else:
+                report_values = portfolio_values(int(st.session_state.shares), enriched_options, metrics.last_price)
+                report_summary = portfolio_summary(int(st.session_state.shares), enriched_options, metrics.last_price)
+                try:
+                    pdf_bytes = build_one_pager_pdf(
+                        ticker=ticker,
+                        company_name=company_name,
+                        currency=currency,
+                        metrics=metrics,
+                        values=report_values,
+                        summary=report_summary,
+                        options=enriched_options,
+                        waterfall_fig=make_waterfall_chart(report_values, currency),
+                        vesting_fig=make_vesting_schedule_chart(enriched_options),
+                        projection_fig=projection_fig_for_pdf,
+                        projection_summary=projection_summary_for_pdf,
+                        custom_mu=custom_mu_for_pdf,
+                        custom_sigma=custom_sigma_for_pdf,
+                    )
+                    st.download_button(
+                        "Download one-page PDF report",
+                        data=pdf_bytes,
+                        file_name=f"{ticker.upper()}_employee_portfolio_one_pager.pdf",
+                        mime="application/pdf",
+                        icon=":material/picture_as_pdf:",
+                        type="primary",
+                    )
+                except Exception as exc:
+                    st.warning(f"PDF report could not be generated: {exc}")
 
     st.caption(
         "Educational model only. Yahoo Finance data can be delayed, revised, or unavailable; verify against official plan documents and professional advice."
