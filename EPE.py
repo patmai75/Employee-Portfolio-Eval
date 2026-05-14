@@ -107,6 +107,14 @@ st.markdown(
             background: rgba(248, 250, 252, .62);
         }
         .small-note {font-size: .95rem; opacity: .75;}
+        div[data-testid="stTabs"] button[data-baseweb="tab"] {
+            padding: .7rem 1.05rem;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"] p {
+            font-size: clamp(1rem, 1.08vw, 1.16rem);
+            font-weight: 850;
+            letter-spacing: -0.01em;
+        }
         @media (max-width: 760px) {
             html, body, [class*="css"] {font-size: 15px;}
             .main .block-container {padding-left: .85rem; padding-right: .85rem;}
