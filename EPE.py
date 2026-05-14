@@ -353,7 +353,13 @@ def make_price_chart(data: pd.DataFrame, ticker: str, currency: str) -> go.Figur
 def make_comparison_chart(primary: pd.DataFrame, benchmark: pd.DataFrame, ticker: str, benchmark_ticker: str) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
-        go.Scatter(x=primary.index, y=primary["Close"] / primary["Close"].iloc[0], mode="lines", name=ticker.upper())
+        go.Scatter(
+            x=primary.index,
+            y=primary["Close"] / primary["Close"].iloc[0],
+            mode="lines",
+            name=ticker.upper(),
+            line={"color": "#2563eb", "width": 3},
+        )
     )
     fig.add_trace(
         go.Scatter(
@@ -361,14 +367,20 @@ def make_comparison_chart(primary: pd.DataFrame, benchmark: pd.DataFrame, ticker
             y=benchmark["Close"] / benchmark["Close"].iloc[0],
             mode="lines",
             name=benchmark_ticker.upper(),
+            line={"color": "#f59e0b", "width": 3, "dash": "dot"},
         )
     )
     fig.update_layout(
-        title="Normalized performance: employee stock vs benchmark",
+        title={"text": "Normalized performance: stock vs benchmark", "x": 0.5, "xanchor": "center"},
         xaxis_title="Date",
         yaxis_title="Growth of $1",
+        yaxis={"tickformat": ".2f"},
         hovermode="x unified",
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font={"color": "#0f172a"},
+        legend={"orientation": "h", "yanchor": "top", "y": -0.18, "xanchor": "center", "x": 0.5},
+        margin={"l": 42, "r": 20, "t": 58, "b": 64},
     )
     return fig
 
@@ -420,10 +432,11 @@ def make_sensitivity_chart(shares: int, options: pd.DataFrame, current_price: fl
             return f"${value / 1_000:.0f}K"
         return f"${value:,.0f}"
 
+    x_labels = [f"{change:+.0%}" for change in adjustments]
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            x=[f"{change:+.0%}" for change in adjustments],
+            x=x_labels,
             y=values,
             text=[compact_money(value) for value in values],
             textposition="outside",
@@ -438,9 +451,19 @@ def make_sensitivity_chart(shares: int, options: pd.DataFrame, current_price: fl
         title="Sensitivity of potential portfolio value",
         xaxis_title="Stock price move (%)",
         yaxis_title="Potential value",
+        xaxis={
+            "type": "category",
+            "categoryorder": "array",
+            "categoryarray": x_labels,
+            "tickmode": "array",
+            "tickvals": x_labels,
+            "ticktext": x_labels,
+            "tickangle": -35,
+            "automargin": True,
+        },
         yaxis={"tickprefix": "$", "separatethousands": True, "range": [0, max_value * 1.18 if max_value else 1]},
         uniformtext={"mode": "show", "minsize": 10},
-        margin={"l": 20, "r": 20, "t": 78, "b": 20},
+        margin={"l": 20, "r": 20, "t": 78, "b": 72},
     )
     return fig
 
@@ -940,7 +963,7 @@ def build_one_pager_pdf(
         raise RuntimeError("PDF export requires reportlab. Install dependencies from requirements.txt.")
 
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A3, landscape
+    from reportlab.lib.pagesizes import A3
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.pdfgen.canvas import Canvas
@@ -958,7 +981,7 @@ def build_one_pager_pdf(
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(A3),
+        pagesize=A3,
         rightMargin=0.28 * inch,
         leftMargin=0.28 * inch,
         topMargin=0.22 * inch,
@@ -1024,9 +1047,9 @@ def build_one_pager_pdf(
         return table
 
     report_width = doc.width
-    chart_col_width = report_width / 3
-    chart_inner_width = chart_col_width - 0.24 * inch
-    chart_image_height = 2.36 * inch
+    chart_col_width = report_width / 2
+    chart_inner_width = chart_col_width - 0.22 * inch
+    chart_image_height = 2.05 * inch
 
     def pdf_chart_content(
         fig: go.Figure | None,
@@ -1062,43 +1085,41 @@ def build_one_pager_pdf(
     benchmark_return = pct(benchmark_metrics.annual_return) if benchmark_metrics is not None else "—"
     benchmark_volatility = pct(benchmark_metrics.annual_volatility) if benchmark_metrics is not None else "—"
     benchmark_window_return = pct(benchmark_metrics.cumulative_return) if benchmark_metrics is not None else "—"
-    context_data = [
-        ["Section", "Metric", "Value", "Section", "Metric", "Value"],
-        ["Market", "Ticker", ticker.upper(), "Benchmark", "Ticker", benchmark.upper()],
-        ["Market", "Window", time_window, "Benchmark", "Window return", benchmark_window_return],
-        ["Market", "Last price", f"{currency} {metrics.last_price:,.2f}", "Benchmark", "Ann. return", benchmark_return],
-        ["Risk", "Ann. return", pct(metrics.annual_return), "Benchmark", "Ann. vol", benchmark_volatility],
-        ["Risk", "Ann. volatility", pct(metrics.annual_volatility), "Portfolio", "Current value", money(values["vested_portfolio"])],
-        ["Portfolio", "Stock value", money(values["stock_value"]), "Portfolio", "Potential value", money(values["potential_portfolio"])],
+    market_data = [
+        ["Metric", ticker.upper(), benchmark.upper()],
+        ["Ticker", ticker.upper(), benchmark.upper()],
+        ["Window return", pct(metrics.cumulative_return), benchmark_window_return],
+        ["Ann. return", pct(metrics.annual_return), benchmark_return],
+        ["Ann. vol", pct(metrics.annual_volatility), benchmark_volatility],
     ]
-    context = styled_table(context_data, font_size=6.8)
-    context._argW = [0.62 * inch, 0.90 * inch, 1.08 * inch] * 2
-    context_block = Table(
-        [[Paragraph("Market & portfolio context", section_style)], [context]],
-        colWidths=[report_width * 0.56],
+    market_table = styled_table(market_data, font_size=7.1)
+    market_table._argW = [1.08 * inch, 1.05 * inch, 1.05 * inch]
+    market_block = Table(
+        [[Paragraph("Market comparison", section_style)], [market_table]],
+        colWidths=[report_width * 0.38],
         hAlign="CENTER",
     )
     comparison_content = pdf_chart_content(
         comparison_fig,
-        width=report_width * 0.39,
-        height=1.58 * inch,
-        render_width=820,
-        render_height=300,
+        width=report_width * 0.55,
+        height=2.05 * inch,
+        render_width=980,
+        render_height=420,
     )
     comparison_block = Table(
         [[Paragraph("Benchmark comparison", section_style)], [comparison_content]],
-        colWidths=[report_width * 0.40],
+        colWidths=[report_width * 0.58],
         hAlign="CENTER",
     )
     top_grid = Table(
-        [[context_block, comparison_block]],
-        colWidths=[report_width * 0.58, report_width * 0.42],
+        [[market_block, comparison_block]],
+        colWidths=[report_width * 0.40, report_width * 0.60],
         hAlign="CENTER",
     )
     top_grid.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 2),
@@ -1110,16 +1131,54 @@ def build_one_pager_pdf(
     story.append(top_grid)
     story.append(Spacer(1, 4))
 
-    executive_data = [
-        ["Metric", "Value", "Metric", "Value", "Metric", "Value", "Metric", "Value"],
-        ["Vested options", money(values["vested_option_value"]), "Total options", money(values["total_option_value"]), "Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}"],
-        ["ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "ITM %", pct(summary["options_itm_pct"]), "Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}"],
-        ["Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}", "Option intrinsic", money(summary["option_intrinsic_value"]), "Custom return", pct(custom_mu), "Custom vol", pct(custom_sigma)],
+    portfolio_data = [
+        ["Metric", "Value"],
+        ["Stock value", money(values["stock_value"])],
+        ["Current value", money(values["vested_portfolio"])],
+        ["Potential value", money(values["potential_portfolio"])],
     ]
-    executive = styled_table(executive_data, font_size=6.8)
-    executive._argW = [1.0 * inch, 1.0 * inch] * 4
-    story.append(Paragraph("Executive position summary", section_style))
-    story.append(executive)
+    portfolio_table = styled_table(portfolio_data, font_size=7.0)
+    portfolio_table._argW = [1.30 * inch, 1.25 * inch]
+    portfolio_block = Table(
+        [[Paragraph("Portfolio value", section_style)], [portfolio_table]],
+        colWidths=[report_width * 0.34],
+        hAlign="CENTER",
+    )
+
+    executive_data = [
+        ["Metric", "Value", "Metric", "Value"],
+        ["Vested options", money(values["vested_option_value"]), "Total options", money(values["total_option_value"])],
+        ["Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}"],
+        ["ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "ITM %", pct(summary["options_itm_pct"])],
+        ["Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}"],
+        ["Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}", "Option intrinsic", money(summary["option_intrinsic_value"])],
+        ["Custom return", pct(custom_mu), "Custom vol", pct(custom_sigma)],
+    ]
+    executive = styled_table(executive_data, font_size=6.5)
+    executive._argW = [1.25 * inch, 1.08 * inch, 1.25 * inch, 1.08 * inch]
+    executive_block = Table(
+        [[Paragraph("Executive position summary", section_style)], [executive]],
+        colWidths=[report_width * 0.62],
+        hAlign="CENTER",
+    )
+    position_grid = Table(
+        [[portfolio_block, executive_block]],
+        colWidths=[report_width * 0.36, report_width * 0.64],
+        hAlign="CENTER",
+    )
+    position_grid.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
+    )
+    story.append(position_grid)
     story.append(Spacer(1, 4))
 
     def chart_block(title: str, fig: go.Figure | None) -> Table:
@@ -1143,11 +1202,12 @@ def build_one_pager_pdf(
 
     chart_grid = Table(
         [
-            [chart_block("Portfolio value bridge", waterfall_fig), chart_block("Portfolio allocation", allocation_fig), chart_block("Sensitivity analysis", sensitivity_fig)],
-            [chart_block("Option vesting schedule", vesting_fig), chart_block("Cumulative vesting curve", cumulative_vesting_fig), chart_block("Median projection scenarios", projection_fig)],
+            [chart_block("Portfolio value bridge", waterfall_fig), chart_block("Portfolio allocation", allocation_fig)],
+            [chart_block("Sensitivity analysis", sensitivity_fig), chart_block("Option vesting schedule", vesting_fig)],
+            [chart_block("Cumulative vesting curve", cumulative_vesting_fig), chart_block("Median projection scenarios", projection_fig)],
         ],
-        colWidths=[chart_col_width, chart_col_width, chart_col_width],
-        rowHeights=[2.78 * inch, 2.78 * inch],
+        colWidths=[chart_col_width, chart_col_width],
+        rowHeights=[2.45 * inch, 2.45 * inch, 2.45 * inch],
         hAlign="CENTER",
     )
     chart_grid.setStyle(
