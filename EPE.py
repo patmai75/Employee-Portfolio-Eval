@@ -406,28 +406,41 @@ def make_allocation_chart(values: dict[str, float]) -> go.Figure:
 
 
 def make_sensitivity_chart(shares: int, options: pd.DataFrame, current_price: float) -> go.Figure:
-    adjustments = np.array([-1.0, -0.75, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])
+    adjustments = np.array([-1.0, -0.75, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 0.75, 1.0])
     prices = current_price * (1 + adjustments)
     values = []
     for price in prices:
         option_value = sum(calculate_option_value(float(price), row.strike_price, int(row.shares)) for row in options.itertuples())
         values.append(shares * float(price) + option_value)
 
+    def compact_money(value: float) -> str:
+        if abs(value) >= 1_000_000:
+            return f"${value / 1_000_000:.1f}M"
+        if abs(value) >= 1_000:
+            return f"${value / 1_000:.0f}K"
+        return f"${value:,.0f}"
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=[f"{change:+.0%}" for change in adjustments],
             y=values,
+            text=[compact_money(value) for value in values],
+            textposition="outside",
+            textfont={"size": 13, "color": "#0f172a"},
+            cliponaxis=False,
             marker_color=np.where(adjustments < 0, "#ef4444", "#2563eb"),
             name="Potential portfolio value",
         )
     )
+    max_value = max(values) if values else 0
     fig.update_layout(
         title="Sensitivity of potential portfolio value",
         xaxis_title="Stock price move (%)",
         yaxis_title="Potential value",
-        yaxis={"tickprefix": "$", "separatethousands": True},
-        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+        yaxis={"tickprefix": "$", "separatethousands": True, "range": [0, max_value * 1.18 if max_value else 1]},
+        uniformtext={"mode": "show", "minsize": 10},
+        margin={"l": 20, "r": 20, "t": 78, "b": 20},
     )
     return fig
 
@@ -907,6 +920,7 @@ def build_one_pager_pdf(
     time_window: str,
     benchmark: str,
     metrics: MarketMetrics,
+    benchmark_metrics: MarketMetrics | None,
     values: dict[str, float],
     summary: dict[str, float],
     options: pd.DataFrame,
@@ -915,6 +929,7 @@ def build_one_pager_pdf(
     vesting_fig: go.Figure,
     cumulative_vesting_fig: go.Figure,
     sensitivity_fig: go.Figure,
+    comparison_fig: go.Figure | None,
     projection_fig: go.Figure | None,
     projection_summary: pd.DataFrame | None,
     custom_mu: float,
@@ -1013,21 +1028,86 @@ def build_one_pager_pdf(
     chart_inner_width = chart_col_width - 0.24 * inch
     chart_image_height = 2.36 * inch
 
+    def pdf_chart_content(
+        fig: go.Figure | None,
+        *,
+        width: float,
+        height: float,
+        render_width: int = 900,
+        render_height: int = 430,
+    ) -> Image | Paragraph:
+        pdf_fig = None
+        if fig is not None:
+            pdf_fig = go.Figure(fig)
+            pdf_fig.update_layout(
+                font={"size": 12, "color": "#0f172a"},
+                title={"font": {"size": 15, "color": "#0f172a"}},
+                legend={"font": {"size": 11, "color": "#0f172a"}},
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                margin={"l": 48, "r": 24, "t": 52, "b": 54},
+            )
+            pdf_fig.update_xaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
+            pdf_fig.update_yaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
+        image_bytes = figure_to_png_bytes(pdf_fig, width=render_width, height=render_height) if pdf_fig is not None else None
+        if image_bytes:
+            return Image(io.BytesIO(image_bytes), width=width, height=height)
+        return Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
+
     story: list[Any] = []
     story.append(Paragraph(f"{company_name} ({ticker.upper()}) · Employee Portfolio One-Pager", title_style))
     story.append(Paragraph("Institutional snapshot of market context, portfolio value, option grants, vesting, sensitivity and projections.", subtitle_style))
     story.append(Spacer(1, 4))
 
+    benchmark_return = pct(benchmark_metrics.annual_return) if benchmark_metrics is not None else "—"
+    benchmark_volatility = pct(benchmark_metrics.annual_volatility) if benchmark_metrics is not None else "—"
+    benchmark_window_return = pct(benchmark_metrics.cumulative_return) if benchmark_metrics is not None else "—"
     context_data = [
-        ["Section", "Metric", "Value", "Section", "Metric", "Value", "Section", "Metric", "Value"],
-        ["Market", "Ticker", ticker.upper(), "Market", "Benchmark", benchmark.upper(), "Market", "Window", time_window],
-        ["Market", "Last price", f"{currency} {metrics.last_price:,.2f}", "Risk", "Ann. return", pct(metrics.annual_return), "Risk", "Ann. volatility", pct(metrics.annual_volatility)],
-        ["Portfolio", "Stock value", money(values["stock_value"]), "Portfolio", "Current value", money(values["vested_portfolio"]), "Portfolio", "Potential value", money(values["potential_portfolio"])],
+        ["Section", "Metric", "Value", "Section", "Metric", "Value"],
+        ["Market", "Ticker", ticker.upper(), "Benchmark", "Ticker", benchmark.upper()],
+        ["Market", "Window", time_window, "Benchmark", "Window return", benchmark_window_return],
+        ["Market", "Last price", f"{currency} {metrics.last_price:,.2f}", "Benchmark", "Ann. return", benchmark_return],
+        ["Risk", "Ann. return", pct(metrics.annual_return), "Benchmark", "Ann. vol", benchmark_volatility],
+        ["Risk", "Ann. volatility", pct(metrics.annual_volatility), "Portfolio", "Current value", money(values["vested_portfolio"])],
+        ["Portfolio", "Stock value", money(values["stock_value"]), "Portfolio", "Potential value", money(values["potential_portfolio"])],
     ]
-    context = styled_table(context_data, font_size=7.0)
-    context._argW = [0.55 * inch, 0.85 * inch, 1.05 * inch] * 3
-    story.append(Paragraph("Market & portfolio context", section_style))
-    story.append(context)
+    context = styled_table(context_data, font_size=6.8)
+    context._argW = [0.62 * inch, 0.90 * inch, 1.08 * inch] * 2
+    context_block = Table(
+        [[Paragraph("Market & portfolio context", section_style)], [context]],
+        colWidths=[report_width * 0.56],
+        hAlign="CENTER",
+    )
+    comparison_content = pdf_chart_content(
+        comparison_fig,
+        width=report_width * 0.39,
+        height=1.58 * inch,
+        render_width=820,
+        render_height=300,
+    )
+    comparison_block = Table(
+        [[Paragraph("Benchmark comparison", section_style)], [comparison_content]],
+        colWidths=[report_width * 0.40],
+        hAlign="CENTER",
+    )
+    top_grid = Table(
+        [[context_block, comparison_block]],
+        colWidths=[report_width * 0.58, report_width * 0.42],
+        hAlign="CENTER",
+    )
+    top_grid.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
+    )
+    story.append(top_grid)
     story.append(Spacer(1, 4))
 
     executive_data = [
@@ -1043,24 +1123,7 @@ def build_one_pager_pdf(
     story.append(Spacer(1, 4))
 
     def chart_block(title: str, fig: go.Figure | None) -> Table:
-        pdf_fig = None
-        if fig is not None:
-            pdf_fig = go.Figure(fig)
-            pdf_fig.update_layout(
-                font={"size": 12, "color": "#0f172a"},
-                title={"font": {"size": 15, "color": "#0f172a"}},
-                legend={"font": {"size": 11, "color": "#0f172a"}},
-                paper_bgcolor="#ffffff",
-                plot_bgcolor="#ffffff",
-                margin={"l": 48, "r": 24, "t": 52, "b": 54},
-            )
-            pdf_fig.update_xaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
-            pdf_fig.update_yaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
-        image_bytes = figure_to_png_bytes(pdf_fig, width=900, height=430) if pdf_fig is not None else None
-        if image_bytes:
-            content = Image(io.BytesIO(image_bytes), width=chart_inner_width, height=chart_image_height)
-        else:
-            content = Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
+        content = pdf_chart_content(fig, width=chart_inner_width, height=chart_image_height)
         block = Table(
             [[Paragraph(title, section_style)], [content]],
             colWidths=[chart_inner_width],
@@ -1332,6 +1395,7 @@ def main() -> None:
     currency = str(profile.get("currency") or profile.get("fast_currency") or "USD")
     company_name = profile.get("longName") or profile.get("shortName") or ticker.upper()
     metrics = calculate_metrics(company_data)
+    benchmark_metrics = calculate_metrics(benchmark_data) if not benchmark_data.empty else None
     price_delta = metrics.last_price - metrics.previous_price
     price_delta_pct = price_delta / metrics.previous_price if metrics.previous_price else 0.0
 
@@ -1364,6 +1428,11 @@ def main() -> None:
                 st.warning(f"No comparison data found for `{benchmark}`.")
             else:
                 st.plotly_chart(make_comparison_chart(company_data, benchmark_data, ticker, benchmark), width="stretch", theme="streamlit")
+                if benchmark_metrics is not None:
+                    bench_cols = st.columns(3)
+                    bench_cols[0].metric(f"{benchmark.upper()} window return", f"{benchmark_metrics.cumulative_return:+.2%}")
+                    bench_cols[1].metric(f"{benchmark.upper()} annual return", f"{benchmark_metrics.annual_return:+.2%}")
+                    bench_cols[2].metric(f"{benchmark.upper()} annual volatility", f"{benchmark_metrics.annual_volatility:.2%}")
 
         risk_col1, risk_col2, risk_col3 = st.columns(3, gap="large")
         with risk_col1:
@@ -1642,6 +1711,7 @@ def main() -> None:
                         time_window=time_window,
                         benchmark=benchmark,
                         metrics=metrics,
+                        benchmark_metrics=benchmark_metrics,
                         values=report_values,
                         summary=report_summary,
                         options=enriched_options,
@@ -1650,6 +1720,11 @@ def main() -> None:
                         vesting_fig=make_vesting_schedule_chart(enriched_options),
                         cumulative_vesting_fig=make_cumulative_vesting_chart(enriched_options),
                         sensitivity_fig=make_sensitivity_chart(int(st.session_state.shares), enriched_options, metrics.last_price),
+                        comparison_fig=(
+                            make_comparison_chart(company_data, benchmark_data, ticker, benchmark)
+                            if not benchmark_data.empty
+                            else None
+                        ),
                         projection_fig=projection_fig_for_pdf,
                         projection_summary=projection_summary_for_pdf,
                         custom_mu=custom_mu_for_pdf,
