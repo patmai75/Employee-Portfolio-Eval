@@ -380,8 +380,28 @@ def make_allocation_chart(values: dict[str, float]) -> go.Figure:
         values["vested_option_value"],
         max(0.0, values["total_option_value"] - values["vested_option_value"]),
     ]
-    fig = go.Figure(data=[go.Pie(labels=labels, values=amounts, hole=0.58, sort=False)])
-    fig.update_layout(title="Current portfolio composition", margin={"l": 20, "r": 20, "t": 70, "b": 20})
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=labels,
+                values=amounts,
+                hole=0.58,
+                sort=False,
+                marker={"colors": ["#2563eb", "#14b8a6", "#f59e0b"], "line": {"color": "#ffffff", "width": 2}},
+                textfont={"color": "#0f172a", "size": 14},
+                insidetextfont={"color": "#ffffff", "size": 14},
+                outsidetextfont={"color": "#0f172a", "size": 13},
+            )
+        ]
+    )
+    fig.update_layout(
+        title="Current portfolio composition",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font={"color": "#0f172a"},
+        legend={"font": {"color": "#0f172a"}},
+        margin={"l": 20, "r": 20, "t": 70, "b": 20},
+    )
     return fig
 
 
@@ -965,12 +985,13 @@ def build_one_pager_pdf(
         return f"{value:.1%}"
 
     def styled_table(data: list[list[Any]], *, header: bool = True, font_size: float = 6.8) -> Table:
-        table = Table(data, repeatRows=1 if header else 0)
+        table = Table(data, repeatRows=1 if header else 0, hAlign="CENTER")
         commands = [
             ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
             ("FONTSIZE", (0, 0), (-1, -1), font_size),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 3),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3),
             ("TOPPADDING", (0, 0), (-1, -1), 2.5),
@@ -986,6 +1007,11 @@ def build_one_pager_pdf(
             )
         table.setStyle(TableStyle(commands))
         return table
+
+    report_width = doc.width
+    chart_col_width = report_width / 3
+    chart_inner_width = chart_col_width - 0.24 * inch
+    chart_image_height = 2.36 * inch
 
     story: list[Any] = []
     story.append(Paragraph(f"{company_name} ({ticker.upper()}) · Employee Portfolio One-Pager", title_style))
@@ -1021,21 +1047,23 @@ def build_one_pager_pdf(
         if fig is not None:
             pdf_fig = go.Figure(fig)
             pdf_fig.update_layout(
-                font={"size": 8},
-                title={"font": {"size": 12}},
-                legend={"font": {"size": 7}},
-                margin={"l": 35, "r": 18, "t": 42, "b": 42},
+                font={"size": 12, "color": "#0f172a"},
+                title={"font": {"size": 15, "color": "#0f172a"}},
+                legend={"font": {"size": 11, "color": "#0f172a"}},
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                margin={"l": 48, "r": 24, "t": 52, "b": 54},
             )
-            pdf_fig.update_xaxes(tickfont={"size": 7}, title_font={"size": 8}, automargin=True)
-            pdf_fig.update_yaxes(tickfont={"size": 7}, title_font={"size": 8}, automargin=True)
-        image_bytes = figure_to_png_bytes(pdf_fig, width=680, height=360) if pdf_fig is not None else None
+            pdf_fig.update_xaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
+            pdf_fig.update_yaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
+        image_bytes = figure_to_png_bytes(pdf_fig, width=900, height=430) if pdf_fig is not None else None
         if image_bytes:
-            content = Image(io.BytesIO(image_bytes), width=4.65 * inch, height=2.32 * inch)
+            content = Image(io.BytesIO(image_bytes), width=chart_inner_width, height=chart_image_height)
         else:
             content = Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
         block = Table(
             [[Paragraph(title, section_style)], [content]],
-            colWidths=[4.65 * inch],
+            colWidths=[chart_inner_width],
         )
         block.setStyle(
             TableStyle(
@@ -1055,10 +1083,22 @@ def build_one_pager_pdf(
             [chart_block("Portfolio value bridge", waterfall_fig), chart_block("Portfolio allocation", allocation_fig), chart_block("Sensitivity analysis", sensitivity_fig)],
             [chart_block("Option vesting schedule", vesting_fig), chart_block("Cumulative vesting curve", cumulative_vesting_fig), chart_block("Median projection scenarios", projection_fig)],
         ],
-        colWidths=[4.9 * inch, 4.9 * inch, 4.9 * inch],
-        rowHeights=[2.67 * inch, 2.67 * inch],
+        colWidths=[chart_col_width, chart_col_width, chart_col_width],
+        rowHeights=[2.78 * inch, 2.78 * inch],
+        hAlign="CENTER",
     )
-    chart_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    chart_grid.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
     story.append(chart_grid)
     story.append(Spacer(1, 3))
 
@@ -1078,7 +1118,7 @@ def build_one_pager_pdf(
         )
     if len(option_rows) == 1:
         option_rows.append(["—", "—", "0", "—", "—", "—", "—"])
-    option_table = styled_table(option_rows, font_size=6.1)
+    option_table = styled_table(option_rows, font_size=6.3)
 
     projection_rows = [["Scenario", "Ann. return", "Ann. vol", "Data starts", "P5", "Median", "P95", "Mean", "P(gain)", "P(double)"]]
     if projection_summary is not None and not projection_summary.empty:
@@ -1099,16 +1139,48 @@ def build_one_pager_pdf(
             )
     else:
         projection_rows.append(["Run projections", "—", "—", "—", "—", "—", "—", "—", "—", "—"])
-    projection_table = styled_table(projection_rows, font_size=5.6)
+    projection_table = styled_table(projection_rows, font_size=5.8)
 
-    tables = Table(
-        [
-            [Paragraph("Option grant detail", section_style), Paragraph("Projection scenario summary", section_style)],
-            [option_table, projection_table],
-        ],
-        colWidths=[7.1 * inch, 7.8 * inch],
+    option_block = Table(
+        [[Paragraph("Option grant detail", section_style)], [option_table]],
+        colWidths=[report_width * 0.47],
+        hAlign="CENTER",
     )
-    tables.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    projection_block = Table(
+        [[Paragraph("Projection scenario summary", section_style)], [projection_table]],
+        colWidths=[report_width * 0.50],
+        hAlign="CENTER",
+    )
+    for block in (option_block, projection_block):
+        block.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ]
+            )
+        )
+    tables = Table(
+        [[option_block, projection_block]],
+        colWidths=[report_width * 0.48, report_width * 0.52],
+        hAlign="CENTER",
+    )
+    tables.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
     story.append(tables)
 
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
