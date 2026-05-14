@@ -808,36 +808,16 @@ def make_multi_projection_chart(results_by_scenario: dict[str, dict[str, Any]], 
                 x=x,
                 y=p[50],
                 mode="lines+markers",
-                name=f"{scenario} median",
+                name=scenario,
                 line={"color": color, "width": 3},
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=p[95],
-                mode="lines",
-                line={"color": color, "width": 1, "dash": "dot"},
-                opacity=.42,
-                name=f"{scenario} p95",
-                showlegend=index < 2,
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=p[5],
-                mode="lines",
-                line={"color": color, "width": 1, "dash": "dot"},
-                opacity=.42,
-                name=f"{scenario} p5",
-                showlegend=index < 2,
+                marker={"size": 8},
+                hovertemplate="%{fullData.name}<br>Year %{x}<br>Median value $%{y:,.0f}<extra></extra>",
             )
         )
     fig.update_layout(
-        title="Portfolio projections across historical regimes",
+        title="Median portfolio projections across scenarios",
         xaxis_title="Years from today",
-        yaxis={"title": "Projected portfolio value", "tickprefix": "$", "separatethousands": True},
+        yaxis={"title": "Projected median portfolio value", "tickprefix": "$", "separatethousands": True},
         hovermode="x unified",
         legend={
             "orientation": "h",
@@ -852,12 +832,25 @@ def make_multi_projection_chart(results_by_scenario: dict[str, dict[str, Any]], 
     return fig
 
 
-def projection_summary_table(results_by_scenario: dict[str, dict[str, Any]], currency: str) -> pd.DataFrame:
+def projection_summary_table(
+    results_by_scenario: dict[str, dict[str, Any]],
+    currency: str,
+    scenario_assumptions: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    assumptions = {}
+    if scenario_assumptions is not None and not scenario_assumptions.empty:
+        assumptions = scenario_assumptions.set_index("scenario").to_dict("index")
+
     rows = []
     for scenario, results in results_by_scenario.items():
+        assumption = assumptions.get(scenario, {})
         rows.append(
             {
                 "Scenario": scenario,
+                "Ann. return": assumption.get("annual_return", np.nan),
+                "Ann. vol": assumption.get("annual_volatility", np.nan),
+                "Data starts": assumption.get("start_date", "—"),
+                "Observations": assumption.get("observations", np.nan),
                 "P5 final": results["percentiles"][5][-1],
                 "Median final": results["percentiles"][50][-1],
                 "P95 final": results["percentiles"][95][-1],
@@ -889,12 +882,17 @@ def build_one_pager_pdf(
     ticker: str,
     company_name: str,
     currency: str,
+    time_window: str,
+    benchmark: str,
     metrics: MarketMetrics,
     values: dict[str, float],
     summary: dict[str, float],
     options: pd.DataFrame,
     waterfall_fig: go.Figure,
+    allocation_fig: go.Figure,
     vesting_fig: go.Figure,
+    cumulative_vesting_fig: go.Figure,
+    sensitivity_fig: go.Figure,
     projection_fig: go.Figure | None,
     projection_summary: pd.DataFrame | None,
     custom_mu: float,
@@ -905,29 +903,39 @@ def build_one_pager_pdf(
         raise RuntimeError("PDF export requires reportlab. Install dependencies from requirements.txt.")
 
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import landscape, letter
+    from reportlab.lib.pagesizes import A3, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
-    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    generated_label = f"Generated {pd.Timestamp.today().strftime('%b %d, %Y')}"
+
+    def draw_footer(canvas: Canvas, doc: SimpleDocTemplate) -> None:
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, 0.14 * inch, generated_label)
+        canvas.restoreState()
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(letter),
+        pagesize=landscape(A3),
         rightMargin=0.28 * inch,
         leftMargin=0.28 * inch,
-        topMargin=0.25 * inch,
-        bottomMargin=0.25 * inch,
+        topMargin=0.22 * inch,
+        bottomMargin=0.30 * inch,
     )
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "ReportTitle",
         parent=styles["Title"],
         fontName="Helvetica-Bold",
-        fontSize=18,
-        leading=20,
+        fontSize=20,
+        leading=22,
         textColor=colors.HexColor("#0f172a"),
-        spaceAfter=2,
+        spaceAfter=1,
     )
     subtitle_style = ParagraphStyle(
         "ReportSubtitle",
@@ -940,13 +948,13 @@ def build_one_pager_pdf(
         "Section",
         parent=styles["Heading3"],
         fontName="Helvetica-Bold",
-        fontSize=9.5,
+        fontSize=10,
         leading=11,
         textColor=colors.HexColor("#1d4ed8"),
-        spaceBefore=4,
+        spaceBefore=3,
         spaceAfter=3,
     )
-    small_style = ParagraphStyle("Small", parent=styles["Normal"], fontSize=7.4, leading=8.5)
+    small_style = ParagraphStyle("Small", parent=styles["Normal"], fontSize=7.0, leading=8.0)
 
     def money(value: float) -> str:
         return f"{currency} {value:,.0f}"
@@ -954,60 +962,91 @@ def build_one_pager_pdf(
     def pct(value: float) -> str:
         return f"{value:.1%}"
 
+    def styled_table(data: list[list[Any]], *, header: bool = True, font_size: float = 6.8) -> Table:
+        table = Table(data, repeatRows=1 if header else 0)
+        commands = [
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), font_size),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ]
+        if header:
+            commands.extend(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0f2fe")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ]
+            )
+        table.setStyle(TableStyle(commands))
+        return table
+
     story: list[Any] = []
     story.append(Paragraph(f"{company_name} ({ticker.upper()}) · Employee Portfolio One-Pager", title_style))
-    story.append(
-        Paragraph(
-            f"Generated {pd.Timestamp.today().strftime('%b %d, %Y')} · Educational model, not financial/tax/legal advice",
-            subtitle_style,
-        )
-    )
+    story.append(Paragraph("Institutional snapshot of market context, portfolio value, option grants, vesting, sensitivity and projections.", subtitle_style))
     story.append(Spacer(1, 4))
 
-    kpi_data = [
-        ["Last price", f"{currency} {metrics.last_price:,.2f}", "Window return", pct(metrics.cumulative_return), "Ann. volatility", pct(metrics.annual_volatility), "Sharpe", f"{metrics.sharpe_ratio:.2f}"],
-        ["Stock value", money(values["stock_value"]), "Vested portfolio", money(values["vested_portfolio"]), "Potential portfolio", money(values["potential_portfolio"]), "Max drawdown", pct(metrics.max_drawdown)],
-        ["Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Custom inputs", f"{custom_mu:.1%} / {custom_sigma:.1%}"],
+    context_data = [
+        ["Section", "Metric", "Value", "Section", "Metric", "Value", "Section", "Metric", "Value"],
+        ["Market", "Ticker", ticker.upper(), "Market", "Benchmark", benchmark.upper(), "Market", "Window", time_window],
+        ["Market", "Last price", f"{currency} {metrics.last_price:,.2f}", "Risk", "Ann. return", pct(metrics.annual_return), "Risk", "Ann. volatility", pct(metrics.annual_volatility)],
+        ["Portfolio", "Stock value", money(values["stock_value"]), "Portfolio", "Current value", money(values["vested_portfolio"]), "Portfolio", "Potential value", money(values["potential_portfolio"])],
     ]
-    kpi_table = Table(kpi_data, colWidths=[0.95 * inch, 1.05 * inch] * 4)
-    kpi_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 7.2),
-                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ]
-        )
-    )
-    story.append(kpi_table)
+    context = styled_table(context_data, font_size=7.0)
+    context._argW = [0.55 * inch, 0.85 * inch, 1.05 * inch] * 3
+    story.append(Paragraph("Market & portfolio context", section_style))
+    story.append(context)
     story.append(Spacer(1, 4))
 
-    chart_cells = []
-    for label, fig in [
-        ("Value bridge", waterfall_fig),
-        ("Vesting schedule", vesting_fig),
-        ("Projection scenarios", projection_fig),
-    ]:
-        image_bytes = figure_to_png_bytes(fig, width=620, height=320) if fig is not None else None
+    executive_data = [
+        ["Metric", "Value", "Metric", "Value", "Metric", "Value", "Metric", "Value"],
+        ["Vested options", money(values["vested_option_value"]), "Total options", money(values["total_option_value"]), "Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}"],
+        ["ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "ITM %", pct(summary["options_itm_pct"]), "Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}"],
+        ["Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}", "Option intrinsic", money(summary["option_intrinsic_value"]), "Custom return", pct(custom_mu), "Custom vol", pct(custom_sigma)],
+    ]
+    executive = styled_table(executive_data, font_size=6.8)
+    executive._argW = [1.0 * inch, 1.0 * inch] * 4
+    story.append(Paragraph("Executive position summary", section_style))
+    story.append(executive)
+    story.append(Spacer(1, 4))
+
+    def chart_block(title: str, fig: go.Figure | None) -> KeepTogether:
+        pdf_fig = None
+        if fig is not None:
+            pdf_fig = go.Figure(fig)
+            pdf_fig.update_layout(
+                font={"size": 8},
+                title={"font": {"size": 12}},
+                legend={"font": {"size": 7}},
+                margin={"l": 35, "r": 18, "t": 42, "b": 42},
+            )
+            pdf_fig.update_xaxes(tickfont={"size": 7}, title_font={"size": 8}, automargin=True)
+            pdf_fig.update_yaxes(tickfont={"size": 7}, title_font={"size": 8}, automargin=True)
+        image_bytes = figure_to_png_bytes(pdf_fig, width=680, height=360) if pdf_fig is not None else None
         if image_bytes:
-            chart_cells.append(Image(io.BytesIO(image_bytes), width=3.25 * inch, height=1.68 * inch))
+            content = Image(io.BytesIO(image_bytes), width=4.65 * inch, height=2.32 * inch)
         else:
-            chart_cells.append(Paragraph(f"<b>{label}</b><br/>Chart image renderer unavailable. Install kaleido to embed charts.", small_style))
-    charts = Table([chart_cells], colWidths=[3.32 * inch, 3.32 * inch, 3.32 * inch])
-    charts.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.25, colors.HexColor("#e2e8f0"))]))
-    story.append(charts)
-    story.append(Spacer(1, 4))
+            content = Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
+        return KeepTogether([Paragraph(title, section_style), content])
 
-    option_rows = [["Grant date", "Vests on", "Shares", "Strike", "Status", "Intrinsic"]]
-    option_view = options[options["shares"] > 0].sort_values("vested_on").head(6)
+    chart_grid = Table(
+        [
+            [chart_block("Portfolio value bridge", waterfall_fig), chart_block("Portfolio allocation", allocation_fig), chart_block("Sensitivity analysis", sensitivity_fig)],
+            [chart_block("Option vesting schedule", vesting_fig), chart_block("Cumulative vesting curve", cumulative_vesting_fig), chart_block("Median projection scenarios", projection_fig)],
+        ],
+        colWidths=[4.9 * inch, 4.9 * inch, 4.9 * inch],
+        rowHeights=[2.67 * inch, 2.67 * inch],
+    )
+    chart_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    story.append(chart_grid)
+    story.append(Spacer(1, 3))
+
+    option_rows = [["Grant date", "Vests on", "Shares", "Strike", "Status", "Intrinsic", "Moneyness"]]
+    option_view = options[options["shares"] > 0].sort_values("vested_on").head(8)
     for row in option_view.itertuples():
         option_rows.append(
             [
@@ -1017,58 +1056,45 @@ def build_one_pager_pdf(
                 f"{currency} {float(row.strike_price):,.2f}",
                 "Vested" if bool(row.is_vested) else "Unvested",
                 money(float(row.intrinsic_value)),
+                f"{float(row.moneyness_pct):,.1f}%" if pd.notna(row.moneyness_pct) else "—",
             ]
         )
     if len(option_rows) == 1:
-        option_rows.append(["—", "—", "0", "—", "—", "—"])
+        option_rows.append(["—", "—", "0", "—", "—", "—", "—"])
+    option_table = styled_table(option_rows, font_size=6.1)
 
-    projection_rows = [["Scenario", "P5 final", "Median final", "P95 final", "P(gain)"]]
+    projection_rows = [["Scenario", "Ann. return", "Ann. vol", "Data starts", "P5", "Median", "P95", "Mean", "P(gain)", "P(double)"]]
     if projection_summary is not None and not projection_summary.empty:
-        for _, row in projection_summary.head(5).iterrows():
+        for _, row in projection_summary.head(6).iterrows():
             projection_rows.append(
                 [
                     str(row["Scenario"]),
+                    pct(float(row["Ann. return"])) if pd.notna(row["Ann. return"]) else "—",
+                    pct(float(row["Ann. vol"])) if pd.notna(row["Ann. vol"]) else "—",
+                    str(row["Data starts"]),
                     money(float(row["P5 final"])),
                     money(float(row["Median final"])),
                     money(float(row["P95 final"])),
+                    money(float(row["Mean final"])),
                     f"{float(row['P(gain)']):.1%}",
+                    f"{float(row['P(double)']):.1%}",
                 ]
             )
     else:
-        projection_rows.append(["Run projections", "—", "—", "—", "—"])
+        projection_rows.append(["Run projections", "—", "—", "—", "—", "—", "—", "—", "—", "—"])
+    projection_table = styled_table(projection_rows, font_size=5.6)
 
-    bottom = Table(
+    tables = Table(
         [
-            [Paragraph("Top option grants", section_style), Paragraph("Projection summary", section_style)],
-            [Table(option_rows), Table(projection_rows)],
+            [Paragraph("Option grant detail", section_style), Paragraph("Projection scenario summary", section_style)],
+            [option_table, projection_table],
         ],
-        colWidths=[5.0 * inch, 5.0 * inch],
+        colWidths=[7.1 * inch, 7.8 * inch],
     )
-    bottom.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("GRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#e2e8f0")),
-                ("FONTSIZE", (0, 0), (-1, -1), 6.6),
-                ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-            ]
-        )
-    )
-    for nested in [bottom._cellvalues[1][0], bottom._cellvalues[1][1]]:
-        nested.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0f2fe")),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
-                    ("FONTSIZE", (0, 0), (-1, -1), 6.5),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ]
-            )
-        )
-    story.append(bottom)
-    doc.build(story)
+    tables.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    story.append(tables)
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buffer.getvalue()
 
 def make_simulation_paths_chart(results: dict[str, Any], paths_to_show: int) -> go.Figure:
@@ -1447,7 +1473,7 @@ def main() -> None:
             else:
                 projection_fig_for_pdf = make_multi_projection_chart(results_by_scenario, int(projection_years))
                 st.plotly_chart(projection_fig_for_pdf, width="stretch", theme="streamlit")
-                summary = projection_summary_table(results_by_scenario, currency)
+                summary = projection_summary_table(results_by_scenario, currency, scenario_subset)
                 projection_summary_for_pdf = summary
                 best = summary.loc[summary["Median final"].idxmax()]
                 worst = summary.loc[summary["Median final"].idxmin()]
@@ -1456,11 +1482,19 @@ def main() -> None:
                 quick_cols[1].metric("Most conservative median", str(worst["Scenario"]), f"{currency} {worst['Median final']:,.0f}")
                 quick_cols[2].metric("Highest P(gain)", str(summary.loc[summary["P(gain)"].idxmax(), "Scenario"]))
                 quick_cols[3].metric("Scenarios compared", f"{len(results_by_scenario)}")
+                summary_display = summary.copy()
+                summary_display["Ann. return"] = summary_display["Ann. return"] * 100
+                summary_display["Ann. vol"] = summary_display["Ann. vol"] * 100
+                summary_display["P(gain)"] = summary_display["P(gain)"] * 100
+                summary_display["P(double)"] = summary_display["P(double)"] * 100
                 st.dataframe(
-                    summary,
+                    summary_display,
                     width="stretch",
                     hide_index=True,
                     column_config={
+                        "Ann. return": st.column_config.NumberColumn("Ann. return", format="%.2f%%"),
+                        "Ann. vol": st.column_config.NumberColumn("Ann. vol", format="%.2f%%"),
+                        "Observations": st.column_config.NumberColumn("Observations", format="%d"),
                         "P5 final": st.column_config.NumberColumn("P5 final", format=f"{currency} %.0f"),
                         "Median final": st.column_config.NumberColumn("Median final", format=f"{currency} %.0f"),
                         "P95 final": st.column_config.NumberColumn("P95 final", format=f"{currency} %.0f"),
@@ -1516,12 +1550,17 @@ def main() -> None:
                         ticker=ticker,
                         company_name=company_name,
                         currency=currency,
+                        time_window=time_window,
+                        benchmark=benchmark,
                         metrics=metrics,
                         values=report_values,
                         summary=report_summary,
                         options=enriched_options,
                         waterfall_fig=make_waterfall_chart(report_values, currency),
+                        allocation_fig=make_allocation_chart(report_values),
                         vesting_fig=make_vesting_schedule_chart(enriched_options),
+                        cumulative_vesting_fig=make_cumulative_vesting_chart(enriched_options),
+                        sensitivity_fig=make_sensitivity_chart(int(st.session_state.shares), enriched_options, metrics.last_price),
                         projection_fig=projection_fig_for_pdf,
                         projection_summary=projection_summary_for_pdf,
                         custom_mu=custom_mu_for_pdf,
