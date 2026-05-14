@@ -952,6 +952,8 @@ def build_one_pager_pdf(
     vesting_fig: go.Figure,
     cumulative_vesting_fig: go.Figure,
     sensitivity_fig: go.Figure,
+    price_fig: go.Figure | None,
+    drawdown_fig: go.Figure | None,
     comparison_fig: go.Figure | None,
     projection_fig: go.Figure | None,
     projection_summary: pd.DataFrame | None,
@@ -1089,6 +1091,26 @@ def build_one_pager_pdf(
             return Image(io.BytesIO(image_bytes), width=width, height=height)
         return Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
 
+    def pdf_panel(title: str, content: Image | Paragraph | Table, width: float) -> Table:
+        panel = Table(
+            [[Paragraph(title, section_style)], [content]],
+            colWidths=[width],
+            hAlign="LEFT",
+        )
+        panel.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ]
+            )
+        )
+        return panel
+
     story: list[Any] = []
     story.append(Paragraph(f"{company_name} ({ticker.upper()}) · Employee Portfolio One-Pager", title_style))
     story.append(Paragraph("Institutional snapshot of market context, portfolio value, option grants, vesting, sensitivity and projections.", subtitle_style))
@@ -1108,26 +1130,39 @@ def build_one_pager_pdf(
     market_table = styled_table(market_data, font_size=7.1)
     market_table._argW = [1.08 * inch, 1.05 * inch, 1.05 * inch]
     window_note = Paragraph(f"Selected analysis window: {time_window}", small_style)
-    market_block = Table(
-        [[Paragraph("Market comparison", section_style)], [market_table], [window_note]],
-        colWidths=[report_width * 0.38],
-        hAlign="LEFT",
+    market_body = Table([[market_table], [window_note]], colWidths=[report_width * 0.38], hAlign="LEFT")
+    market_body.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ]
+        )
     )
-    comparison_content = pdf_chart_content(
-        comparison_fig,
-        width=report_width * 0.55,
-        height=2.05 * inch,
-        render_width=980,
-        render_height=420,
+    market_block = pdf_panel("Market comparison", market_body, report_width * 0.38)
+    price_block = pdf_panel(
+        "Stock price history",
+        pdf_chart_content(price_fig, width=report_width * 0.55, height=1.72 * inch, render_width=980, render_height=340),
+        report_width * 0.58,
     )
-    comparison_block = Table(
-        [[Paragraph("Benchmark comparison", section_style)], [comparison_content]],
-        colWidths=[report_width * 0.58],
-        hAlign="LEFT",
+    drawdown_block = pdf_panel(
+        "Stock drawdown profile",
+        pdf_chart_content(drawdown_fig, width=report_width * 0.37, height=1.62 * inch, render_width=760, render_height=320),
+        report_width * 0.38,
+    )
+    comparison_block = pdf_panel(
+        "Benchmark comparison",
+        pdf_chart_content(comparison_fig, width=report_width * 0.55, height=1.72 * inch, render_width=980, render_height=340),
+        report_width * 0.58,
     )
     top_grid = Table(
-        [[market_block, comparison_block]],
+        [[market_block, price_block], [drawdown_block, comparison_block]],
         colWidths=[report_width * 0.40, report_width * 0.60],
+        rowHeights=[2.16 * inch, 2.08 * inch],
         hAlign="CENTER",
     )
     top_grid.setStyle(
@@ -1792,6 +1827,8 @@ def main() -> None:
                         vesting_fig=make_vesting_schedule_chart(enriched_options),
                         cumulative_vesting_fig=make_cumulative_vesting_chart(enriched_options),
                         sensitivity_fig=make_sensitivity_chart(int(st.session_state.shares), enriched_options, metrics.last_price),
+                        price_fig=make_price_chart(company_data, ticker, currency),
+                        drawdown_fig=make_drawdown_chart(company_data),
                         comparison_fig=(
                             make_comparison_chart(company_data, benchmark_data, ticker, benchmark)
                             if not benchmark_data.empty
