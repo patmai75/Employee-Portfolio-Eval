@@ -744,7 +744,7 @@ def scenario_metrics_from_history(full_data: pd.DataFrame, selected_data: pd.Dat
             continue
         if name == "Custom / selected":
             mu, sigma = custom_mu, custom_sigma
-            window_start = frame.index.min().date()
+            window_start = "Not applicable"
         else:
             metrics = calculate_metrics(frame)
             mu, sigma = metrics.annual_return, max(metrics.annual_volatility, 0.0001)
@@ -755,7 +755,9 @@ def scenario_metrics_from_history(full_data: pd.DataFrame, selected_data: pd.Dat
                 "annual_return": float(mu),
                 "annual_volatility": float(max(sigma, 0.0001)),
                 "start_date": str(window_start),
-                "observations": int(frame["Close"].dropna().shape[0]),
+                "observations": (
+                    np.nan if name == "Custom / selected" else int(frame["Close"].dropna().shape[0])
+                ),
             }
         )
     return pd.DataFrame(scenarios)
@@ -907,7 +909,7 @@ def build_one_pager_pdf(
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.pdfgen.canvas import Canvas
-    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     generated_label = f"Generated {pd.Timestamp.today().strftime('%b %d, %Y')}"
 
@@ -1014,7 +1016,7 @@ def build_one_pager_pdf(
     story.append(executive)
     story.append(Spacer(1, 4))
 
-    def chart_block(title: str, fig: go.Figure | None) -> KeepTogether:
+    def chart_block(title: str, fig: go.Figure | None) -> Table:
         pdf_fig = None
         if fig is not None:
             pdf_fig = go.Figure(fig)
@@ -1031,7 +1033,22 @@ def build_one_pager_pdf(
             content = Image(io.BytesIO(image_bytes), width=4.65 * inch, height=2.32 * inch)
         else:
             content = Paragraph("Chart renderer unavailable. Install kaleido to embed this chart.", small_style)
-        return KeepTogether([Paragraph(title, section_style), content])
+        block = Table(
+            [[Paragraph(title, section_style)], [content]],
+            colWidths=[4.65 * inch],
+        )
+        block.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        return block
 
     chart_grid = Table(
         [
