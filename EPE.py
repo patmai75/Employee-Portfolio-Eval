@@ -963,6 +963,7 @@ def build_one_pager_pdf(
         raise RuntimeError("PDF export requires reportlab. Install dependencies from requirements.txt.")
 
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.pagesizes import A3
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
@@ -1000,8 +1001,10 @@ def build_one_pager_pdf(
     subtitle_style = ParagraphStyle(
         "ReportSubtitle",
         parent=styles["Normal"],
+        fontName="Helvetica",
         fontSize=8.5,
         leading=10,
+        alignment=TA_CENTER,
         textColor=colors.HexColor("#475569"),
     )
     section_style = ParagraphStyle(
@@ -1010,11 +1013,20 @@ def build_one_pager_pdf(
         fontName="Helvetica-Bold",
         fontSize=10,
         leading=11,
+        alignment=TA_LEFT,
         textColor=colors.HexColor("#1d4ed8"),
         spaceBefore=3,
         spaceAfter=3,
     )
-    small_style = ParagraphStyle("Small", parent=styles["Normal"], fontSize=7.0, leading=8.0)
+    small_style = ParagraphStyle(
+        "Small",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.0,
+        leading=8.0,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#64748b"),
+    )
 
     def money(value: float) -> str:
         return f"{currency} {value:,.0f}"
@@ -1023,13 +1035,13 @@ def build_one_pager_pdf(
         return f"{value:.1%}"
 
     def styled_table(data: list[list[Any]], *, header: bool = True, font_size: float = 6.8) -> Table:
-        table = Table(data, repeatRows=1 if header else 0, hAlign="CENTER")
+        table = Table(data, repeatRows=1 if header else 0, hAlign="LEFT")
         commands = [
             ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
             ("FONTSIZE", (0, 0), (-1, -1), font_size),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
             ("LEFTPADDING", (0, 0), (-1, -1), 3),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3),
             ("TOPPADDING", (0, 0), (-1, -1), 2.5),
@@ -1063,15 +1075,15 @@ def build_one_pager_pdf(
         if fig is not None:
             pdf_fig = go.Figure(fig)
             pdf_fig.update_layout(
-                font={"size": 12, "color": "#0f172a"},
-                title={"font": {"size": 15, "color": "#0f172a"}},
-                legend={"font": {"size": 11, "color": "#0f172a"}},
+                font={"family": "Helvetica", "size": 10, "color": "#0f172a"},
+                title={"font": {"family": "Helvetica", "size": 12, "color": "#0f172a"}},
+                legend={"font": {"family": "Helvetica", "size": 9, "color": "#0f172a"}},
                 paper_bgcolor="#ffffff",
                 plot_bgcolor="#ffffff",
                 margin={"l": 48, "r": 24, "t": 52, "b": 54},
             )
-            pdf_fig.update_xaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
-            pdf_fig.update_yaxes(tickfont={"size": 10, "color": "#0f172a"}, title_font={"size": 11}, automargin=True)
+            pdf_fig.update_xaxes(tickfont={"size": 8.5, "color": "#0f172a"}, title_font={"size": 9.5}, automargin=True)
+            pdf_fig.update_yaxes(tickfont={"size": 8.5, "color": "#0f172a"}, title_font={"size": 9.5}, automargin=True)
         image_bytes = figure_to_png_bytes(pdf_fig, width=render_width, height=render_height) if pdf_fig is not None else None
         if image_bytes:
             return Image(io.BytesIO(image_bytes), width=width, height=height)
@@ -1085,19 +1097,21 @@ def build_one_pager_pdf(
     benchmark_return = pct(benchmark_metrics.annual_return) if benchmark_metrics is not None else "—"
     benchmark_volatility = pct(benchmark_metrics.annual_volatility) if benchmark_metrics is not None else "—"
     benchmark_window_return = pct(benchmark_metrics.cumulative_return) if benchmark_metrics is not None else "—"
+    benchmark_price = f"{currency} {benchmark_metrics.last_price:,.2f}" if benchmark_metrics is not None else "—"
     market_data = [
         ["Metric", ticker.upper(), benchmark.upper()],
-        ["Ticker", ticker.upper(), benchmark.upper()],
+        ["Current price", f"{currency} {metrics.last_price:,.2f}", benchmark_price],
         ["Window return", pct(metrics.cumulative_return), benchmark_window_return],
         ["Ann. return", pct(metrics.annual_return), benchmark_return],
         ["Ann. vol", pct(metrics.annual_volatility), benchmark_volatility],
     ]
     market_table = styled_table(market_data, font_size=7.1)
     market_table._argW = [1.08 * inch, 1.05 * inch, 1.05 * inch]
+    window_note = Paragraph(f"Selected analysis window: {time_window}", small_style)
     market_block = Table(
-        [[Paragraph("Market comparison", section_style)], [market_table]],
+        [[Paragraph("Market comparison", section_style)], [market_table], [window_note]],
         colWidths=[report_width * 0.38],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
     comparison_content = pdf_chart_content(
         comparison_fig,
@@ -1109,7 +1123,7 @@ def build_one_pager_pdf(
     comparison_block = Table(
         [[Paragraph("Benchmark comparison", section_style)], [comparison_content]],
         colWidths=[report_width * 0.58],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
     top_grid = Table(
         [[market_block, comparison_block]],
@@ -1119,8 +1133,8 @@ def build_one_pager_pdf(
     top_grid.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -1142,24 +1156,22 @@ def build_one_pager_pdf(
     portfolio_block = Table(
         [[Paragraph("Portfolio value", section_style)], [portfolio_table]],
         colWidths=[report_width * 0.34],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
 
     executive_data = [
         ["Metric", "Value", "Metric", "Value"],
-        ["Vested options", money(values["vested_option_value"]), "Total options", money(values["total_option_value"])],
-        ["Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}", "Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}"],
+        ["Vested options", money(values["vested_option_value"]), "Total options value", money(values["total_option_value"])],
+        ["Vested avg strike", f"{currency} {summary['weighted_avg_vested_strike']:,.2f}", "Weighted avg strike", f"{currency} {summary['weighted_avg_strike']:,.2f}"],
         ["ITM option shares", f"{summary['in_the_money_option_shares']:,.0f}", "ITM %", pct(summary["options_itm_pct"])],
-        ["Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Equivalent exposure", f"{summary['equivalent_share_exposure']:,.0f}"],
-        ["Avg intrinsic / option", f"{currency} {summary['avg_intrinsic_per_option']:,.2f}", "Option intrinsic", money(summary["option_intrinsic_value"])],
-        ["Custom return", pct(custom_mu), "Custom vol", pct(custom_sigma)],
+        ["Unvested options", f"{summary['unvested_option_shares']:,.0f}", "Total options", f"{summary['option_shares']:,.0f}"],
     ]
-    executive = styled_table(executive_data, font_size=6.5)
+    executive = styled_table(executive_data, font_size=6.7)
     executive._argW = [1.25 * inch, 1.08 * inch, 1.25 * inch, 1.08 * inch]
     executive_block = Table(
         [[Paragraph("Executive position summary", section_style)], [executive]],
         colWidths=[report_width * 0.62],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
     position_grid = Table(
         [[portfolio_block, executive_block]],
@@ -1169,8 +1181,8 @@ def build_one_pager_pdf(
     position_grid.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -1214,7 +1226,7 @@ def build_one_pager_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 3),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -1267,18 +1279,18 @@ def build_one_pager_pdf(
     option_block = Table(
         [[Paragraph("Option grant detail", section_style)], [option_table]],
         colWidths=[report_width * 0.47],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
     projection_block = Table(
         [[Paragraph("Projection scenario summary", section_style)], [projection_table]],
         colWidths=[report_width * 0.50],
-        hAlign="CENTER",
+        hAlign="LEFT",
     )
     for block in (option_block, projection_block):
         block.setStyle(
             TableStyle(
                 [
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -1296,7 +1308,7 @@ def build_one_pager_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 3),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
